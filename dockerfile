@@ -14,8 +14,8 @@ COPY scripts/ /app/scripts/
 COPY api/ /app/api/
 
 # Installation des dépendances Python
-RUN pip install --no-cache-dir -r /app/agent/requirements.txt
-RUN pip install --no-cache-dir -r /app/api/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
 
 # Variables d'environnement
 ENV PYTHONUNBUFFERED=1
