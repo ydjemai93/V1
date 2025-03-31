@@ -1,0 +1,11 @@
+# LiveKit Configuration
+LIVEKIT_URL=wss://<project-id>.livekit.cloud
+LIVEKIT_API_KEY=<your-api-key>
+LIVEKIT_API_SECRET=<your-api-secret>
+
+# SIP Configuration
+OUTBOUND_TRUNK_ID=<sip-trunk-id>
+
+# AI Services
+OPENAI_API_KEY=<openai-api-key>
+DEEPGRAM_API_KEY=<deepgram-api-key>

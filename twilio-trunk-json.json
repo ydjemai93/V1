@@ -1,0 +1,9 @@
+{
+  "trunk": {
+    "name": "My Outbound Trunk",
+    "address": "my-trunk-domain-name.pstn.twilio.com",
+    "numbers": ["+15105550123"],
+    "auth_username": "username",
+    "auth_password": "password"
+  }
+}
