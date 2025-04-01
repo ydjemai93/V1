@@ -1,9 +1,9 @@
 {
   "trunk": {
     "name": "My Outbound Trunk",
-    "address": "my-trunk-domain-name.pstn.twilio.com",
-    "numbers": ["+15105550123"],
-    "auth_username": "username",
-    "auth_password": "password"
+    "address": "pamlivekit.pstn.twilio.com",
+    "numbers": ["+17755773149"],
+    "auth_username": "AC49304f5aae0f057eb20c3a0fbc58cb08",
+    "auth_password": "4675b948d8c88865d3c1f954d6ba5436"
   }
 }
