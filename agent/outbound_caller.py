@@ -37,9 +37,15 @@ class OutboundCaller:
         Raises:
             Exception si l'appel échoue ou expire
         """
+        # Logs détaillés de l'appel
+        logger.info(f"Détails de l'appel:")
+        logger.info(f"Numéro de téléphone: {phone_number}")
+        logger.info(f"Trunk ID: {self.trunk_id}")
+        logger.info(f"Room Name: {self.room.name}")
+
         user_identity = f"phone_user_{phone_number}"
         
-        logger.info(f"Appel en cours vers {phone_number} via trunk {self.trunk_id}")
+        logger.info(f"Préparation de l'appel vers {phone_number} via trunk {self.trunk_id}")
         
         # Création de la requête SIP pour passer l'appel
         request = CreateSIPParticipantRequest(
@@ -52,12 +58,19 @@ class OutboundCaller:
             play_dialtone=True,
         )
         
-        # Lancement de l'appel via l'API LiveKit
-        await self.api.sip.create_sip_participant(request)
+        try:
+            # Lancement de l'appel via l'API LiveKit
+            await self.api.sip.create_sip_participant(request)
+            
+            # Attente que le participant rejoigne la room
+            participant = await self._wait_for_participant_to_join(user_identity, timeout)
+            
+            logger.info(f"Appel réussi. Participant: {participant.identity}")
+            return participant
         
-        # Attente que le participant rejoigne la room
-        participant = await self._wait_for_participant_to_join(user_identity, timeout)
-        return participant
+        except Exception as e:
+            logger.error(f"Erreur lors du démarrage de l'appel: {e}")
+            raise
     
     async def _wait_for_participant_to_join(self, identity, timeout):
         """
@@ -78,6 +91,7 @@ class OutboundCaller:
         # Vérifier si le participant existe déjà
         for p in self.room.remote_participants.values():
             if p.identity == identity:
+                logger.info(f"Participant {identity} déjà présent")
                 return p
         
         # Configurer un event pour la connexion du participant
@@ -86,25 +100,32 @@ class OutboundCaller:
         # Définir la callback pour l'événement de connexion
         @self.room.on("participant_connected")
         def on_participant_connected(participant: rtc.Participant, *_):
+            logger.info(f"Participant connecté: {participant.identity}")
             if participant.identity == identity:
                 participant_connected_event.set()
         
         # Attendre que le participant se connecte ou que le délai expire
         while asyncio.get_event_loop().time() - start_time < timeout:
             try:
+                logger.info(f"En attente de connexion pour {identity}")
                 await asyncio.wait_for(participant_connected_event.wait(), 1)
+                
                 # Participant connecté, retourner l'instance
                 for p in self.room.remote_participants.values():
                     if p.identity == identity:
+                        logger.info(f"Participant {identity} trouvé")
                         return p
             except asyncio.TimeoutError:
                 # Vérifier si l'appel a échoué
                 for p in self.room.remote_participants.values():
                     if p.identity == identity:
+                        logger.info(f"Participant {identity} trouvé malgré le timeout")
                         return p
+            
             await asyncio.sleep(0.1)
         
         # Le délai a expiré sans que le participant ne se connecte
+        logger.error(f"Délai d'attente dépassé pour {identity}")
         raise Exception(f"Délai d'attente dépassé pour que {identity} rejoigne l'appel")
     
     async def monitor_call_status(self, participant, check_interval=0.5):
@@ -115,26 +136,31 @@ class OutboundCaller:
             participant: Participant SIP à surveiller
             check_interval: Intervalle entre les vérifications en secondes
         """
-        while True:
-            # Vérifier si le participant est toujours connecté
-            if participant.identity not in self.room.remote_participants:
-                logger.info(f"Le participant {participant.identity} a quitté la room")
-                return
-            
-            # Vérifier l'état de l'appel via les attributs du participant
-            call_status = participant.attributes.get("sip.callStatus")
-            
-            if call_status == "active":
-                # L'appel est actif, continuer à surveiller
-                pass
-            elif call_status == "hangup":
-                logger.info(f"L'appel avec {participant.identity} a été raccroché")
-                return
-            elif call_status == "automation":
-                # DTMF en cours, continuer à surveiller
-                pass
-            
-            await asyncio.sleep(check_interval)
+        try:
+            while True:
+                # Vérifier si le participant est toujours connecté
+                if participant.identity not in self.room.remote_participants:
+                    logger.info(f"Le participant {participant.identity} a quitté la room")
+                    return
+                
+                # Vérifier l'état de l'appel via les attributs du participant
+                call_status = participant.attributes.get("sip.callStatus")
+                
+                logger.debug(f"Statut de l'appel: {call_status}")
+                
+                if call_status == "active":
+                    # L'appel est actif, continuer à surveiller
+                    pass
+                elif call_status == "hangup":
+                    logger.info(f"L'appel avec {participant.identity} a été raccroché")
+                    return
+                elif call_status == "terminated":
+                    logger.info(f"L'appel avec {participant.identity} est terminé")
+                    return
+                
+                await asyncio.sleep(check_interval)
+        except Exception as e:
+            logger.error(f"Erreur lors de la surveillance de l'appel : {e}")
     
     async def end_call(self, participant):
         """
