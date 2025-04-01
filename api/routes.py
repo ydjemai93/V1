@@ -7,6 +7,12 @@ from flask import request, jsonify
 from threading import Thread
 import asyncio
 import traceback
+import aiohttp
+import secrets
+
+# Configuration pour fermer proprement les sessions aiohttp
+asyncio.get_event_loop().set_debug(True)
+aiohttp.ClientSession.DEFAULT_TIMEOUT = 30
 
 logger = logging.getLogger(__name__)
 
@@ -251,12 +257,18 @@ def register_routes(app):
                             "error": "Aucun trunk SIP configuré. Utilisez /api/trunk/setup/direct d'abord."
                         }
                     
-                    # Création du dispatch
+                    # Génération d'un nom de room unique
+                    unique_room_name = f"dispatch-{secrets.token_hex(4)}"
+                    
+                    # Création du dispatch - modification de la méthode
                     dispatch = await livekit_api.agent_dispatch.create_dispatch(
                         api.CreateAgentDispatchRequest(
                             agent_name="outbound-caller",
-                            new_room=True,
-                            metadata=phone_number
+                            room=unique_room_name,
+                            metadata=json.dumps({
+                                "phone_number": phone_number,
+                                "trunk_id": trunk_id
+                            })
                         )
                     )
                     
@@ -317,12 +329,18 @@ def register_routes(app):
                             "error": "Aucun trunk SIP configuré. Utilisez /api/trunk/setup/direct d'abord."
                         }
                     
+                    # Génération d'un nom de room unique
+                    unique_room_name = f"call-{secrets.token_hex(4)}"
+                    
                     # Création du dispatch
                     dispatch = await livekit_api.agent_dispatch.create_dispatch(
                         api.CreateAgentDispatchRequest(
                             agent_name="outbound-caller",
-                            new_room=True,
-                            metadata=phone_number
+                            room=unique_room_name,
+                            metadata=json.dumps({
+                                "phone_number": phone_number,
+                                "trunk_id": trunk_id
+                            })
                         )
                     )
                     
