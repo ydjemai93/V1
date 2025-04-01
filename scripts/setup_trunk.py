@@ -7,7 +7,10 @@ from livekit import api
 from livekit.protocol.sip import CreateSIPOutboundTrunkRequest, SIPOutboundTrunkInfo
 from twilio.rest import Client
 
-load_dotenv()
+# Chercher le fichier .env à la racine du projet
+root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+env_path = os.path.join(root_dir, ".env")
+load_dotenv(env_path)
 
 # Variables d'environnement Twilio
 TWILIO_ACCOUNT_SID = os.getenv('TWILIO_ACCOUNT_SID')
@@ -21,6 +24,11 @@ def create_twilio_sip_trunk():
     Returns:
         dict: Informations sur le trunk SIP Twilio créé
     """
+    # Débogage: Vérifier les variables d'environnement
+    print(f"Debug - TWILIO_ACCOUNT_SID: {'Défini' if TWILIO_ACCOUNT_SID else 'Non défini'}")
+    print(f"Debug - TWILIO_AUTH_TOKEN: {'Défini' if TWILIO_AUTH_TOKEN else 'Non défini'}")
+    print(f"Debug - TWILIO_PHONE_NUMBER: {'Défini' if TWILIO_PHONE_NUMBER else 'Non défini'}")
+    
     # Vérification des informations Twilio
     if not all([TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER]):
         print("Erreur: Variables d'environnement Twilio manquantes. Vérifiez votre fichier .env")
@@ -128,27 +136,32 @@ async def create_outbound_trunk(trunk_data_file):
         print(f"Trunk SIP sortant créé avec succès: ID = {response.sid}")
         
         # Enregistrement de l'ID du trunk dans le fichier .env
-        with open('../agent/.env', 'r') as env_file:
-            env_content = env_file.read()
-        
-        if 'OUTBOUND_TRUNK_ID' in env_content:
-            # Mise à jour de la valeur existante
-            env_lines = env_content.split('\n')
-            updated_lines = []
-            for line in env_lines:
-                if line.startswith('OUTBOUND_TRUNK_ID='):
-                    updated_lines.append(f'OUTBOUND_TRUNK_ID={response.sid}')
-                else:
-                    updated_lines.append(line)
-            updated_env = '\n'.join(updated_lines)
-        else:
-            # Ajout de la nouvelle valeur
-            updated_env = f"{env_content}\nOUTBOUND_TRUNK_ID={response.sid}"
-        
-        with open('../agent/.env', 'w') as env_file:
-            env_file.write(updated_env)
-        
-        print(f"L'ID du trunk a été enregistré dans le fichier .env")
+        env_path = os.path.join(root_dir, ".env")
+        try:
+            with open(env_path, 'r') as env_file:
+                env_content = env_file.read()
+            
+            if 'OUTBOUND_TRUNK_ID' in env_content:
+                # Mise à jour de la valeur existante
+                env_lines = env_content.split('\n')
+                updated_lines = []
+                for line in env_lines:
+                    if line.startswith('OUTBOUND_TRUNK_ID='):
+                        updated_lines.append(f'OUTBOUND_TRUNK_ID={response.sid}')
+                    else:
+                        updated_lines.append(line)
+                updated_env = '\n'.join(updated_lines)
+            else:
+                # Ajout de la nouvelle valeur
+                updated_env = f"{env_content}\nOUTBOUND_TRUNK_ID={response.sid}"
+            
+            with open(env_path, 'w') as env_file:
+                env_file.write(updated_env)
+            
+            print(f"L'ID du trunk a été enregistré dans le fichier .env")
+        except Exception as e:
+            print(f"Attention: Impossible de mettre à jour le fichier .env: {e}")
+            print(f"Trunk ID: {response.sid} - Pensez à l'ajouter manuellement à vos variables d'environnement.")
         
         return response.sid
     except Exception as e:
