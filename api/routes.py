@@ -39,6 +39,76 @@ def register_routes(app):
             "all_variables_present": all([account_sid, auth_token, phone_number])
         })
     
+    @app.route("/api/sip/check", methods=["GET"])
+    def check_sip_config():
+        """Vérification détaillée de la configuration SIP"""
+        try:
+            from twilio.rest import Client
+            
+            account_sid = os.environ.get('TWILIO_ACCOUNT_SID')
+            auth_token = os.environ.get('TWILIO_AUTH_TOKEN')
+            phone_number = os.environ.get('TWILIO_PHONE_NUMBER')
+            trunk_id = os.environ.get('OUTBOUND_TRUNK_ID')
+            
+            client = Client(account_sid, auth_token)
+            
+            # Vérification du trunk
+            trunk = client.trunking.trunks(trunk_id).fetch()
+            
+            return jsonify({
+                "success": True,
+                "account_sid": account_sid,
+                "phone_number": phone_number,
+                "trunk_id": trunk_id,
+                "trunk_name": trunk.friendly_name,
+                "trunk_domain": f"{trunk_id}.sip.twilio.com"
+            })
+        
+        except Exception as e:
+            return jsonify({
+                "success": False,
+                "error": str(e),
+                "traceback": traceback.format_exc()
+            }), 500
+    
+    @app.route("/api/twilio/test-call", methods=["POST"])
+    def test_twilio_call():
+        """Test d'appel direct via Twilio"""
+        try:
+            from twilio.rest import Client
+            
+            data = request.json
+            if not data or "phone" not in data:
+                return jsonify({"error": "Numéro de téléphone manquant"}), 400
+            
+            phone_number = data["phone"]
+            
+            account_sid = os.environ.get('TWILIO_ACCOUNT_SID')
+            auth_token = os.environ.get('TWILIO_AUTH_TOKEN')
+            twilio_phone_number = os.environ.get('TWILIO_PHONE_NUMBER')
+            
+            client = Client(account_sid, auth_token)
+            
+            # Tenter un appel simple
+            call = client.calls.create(
+                to=phone_number,
+                from_=twilio_phone_number,
+                url="http://demo.twilio.com/docs/voice.xml"  # URL de test Twilio
+            )
+            
+            return jsonify({
+                "success": True,
+                "call_sid": call.sid,
+                "status": call.status
+            })
+        
+        except Exception as e:
+            return jsonify({
+                "success": False,
+                "error": str(e),
+                "traceback": traceback.format_exc()
+            }), 500
+
     @app.route("/api/twilio/verify", methods=["GET"])
     def verify_twilio():
         """Endpoint pour vérifier la connexion à Twilio"""
@@ -63,36 +133,6 @@ def register_routes(app):
                 "account_status": account.status,
                 "account_name": account.friendly_name,
                 "created_at": str(account.date_created)
-            })
-        except Exception as e:
-            return jsonify({
-                "success": False,
-                "error": str(e),
-                "traceback": traceback.format_exc()
-            }), 500
-
-    @app.route("/api/twilio/list-attributes", methods=["GET"])
-    def list_twilio_attributes():
-        """Endpoint pour lister les attributs du client Twilio"""
-        try:
-            from twilio.rest import Client
-            
-            account_sid = os.environ.get("TWILIO_ACCOUNT_SID")
-            auth_token = os.environ.get("TWILIO_AUTH_TOKEN")
-            
-            if not account_sid or not auth_token:
-                return jsonify({
-                    "success": False,
-                    "error": "Identifiants Twilio manquants"
-                })
-            
-            client = Client(account_sid, auth_token)
-            
-            return jsonify({
-                "success": True,
-                "client_attributes": dir(client),
-                "trunking_attributes": dir(client.trunking) if hasattr(client, 'trunking') else "No trunking module",
-                "trunking_trunks_attributes": dir(client.trunking.trunks) if hasattr(client, 'trunking') and hasattr(client.trunking, 'trunks') else "No trunks module"
             })
         except Exception as e:
             return jsonify({
@@ -352,7 +392,7 @@ def register_routes(app):
                     }
                 
                 except Exception as e:
-                    logger.error(f"Erreur lors de l'appel: {e}")
+                   logger.error(f"Erreur lors de l'appel: {e}")
                     return {
                         "success": False,
                         "error": str(e),
