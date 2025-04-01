@@ -9,7 +9,14 @@ def load_env_file(env_file=None):
     if env_file and os.path.exists(env_file):
         load_dotenv(env_file)
     else:
-        load_dotenv()
+        # Chercher le fichier .env à la racine du projet
+        root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        env_path = os.path.join(root_dir, ".env")
+        if os.path.exists(env_path):
+            load_dotenv(env_path)
+        else:
+            # Fallback au comportement par défaut
+            load_dotenv()
 
 async def create_dispatch(phone_number, env_file=None):
     """
