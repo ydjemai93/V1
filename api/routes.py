@@ -65,6 +65,36 @@ def register_routes(app):
                 "traceback": traceback.format_exc()
             }), 500
 
+    @app.route("/api/twilio/list-attributes", methods=["GET"])
+    def list_twilio_attributes():
+        """Endpoint pour lister les attributs du client Twilio"""
+        try:
+            from twilio.rest import Client
+            
+            account_sid = os.environ.get("TWILIO_ACCOUNT_SID")
+            auth_token = os.environ.get("TWILIO_AUTH_TOKEN")
+            
+            if not account_sid or not auth_token:
+                return jsonify({
+                    "success": False,
+                    "error": "Identifiants Twilio manquants"
+                })
+            
+            client = Client(account_sid, auth_token)
+            
+            return jsonify({
+                "success": True,
+                "client_attributes": dir(client),
+                "trunking_attributes": dir(client.trunking) if hasattr(client, 'trunking') else "No trunking module",
+                "trunking_trunks_attributes": dir(client.trunking.trunks) if hasattr(client, 'trunking') and hasattr(client.trunking, 'trunks') else "No trunks module"
+            })
+        except Exception as e:
+            return jsonify({
+                "success": False,
+                "error": str(e),
+                "traceback": traceback.format_exc()
+            }), 500
+
     @app.route("/api/livekit/test", methods=["GET"])
     def test_livekit():
         """Endpoint pour tester la connexion à LiveKit"""
@@ -123,9 +153,24 @@ def register_routes(app):
                     # Client Twilio
                     client = Client(account_sid, auth_token)
                     
-                    # Récupérer ou créer un trunk
-                    trunks = client.sip.trunks.list(limit=1)
-                    trunk = trunks[0] if trunks else client.sip.trunks.create(friendly_name="LiveKit AI Trunk")
+                    # Débogage - impression des attributs du client
+                    logger.info(f"Attributs du client Twilio: {dir(client)}")
+                    logger.info(f"Attributs de trunking: {dir(client.trunking)}")
+                    
+                    try:
+                        # Essayer de récupérer les trunks
+                        trunks = list(client.trunking.trunks.list(limit=1))
+                    except Exception as e:
+                        logger.error(f"Erreur lors de la récupération des trunks: {e}")
+                        trunks = []
+                    
+                    # Créer un trunk si aucun n'existe
+                    if not trunks:
+                        logger.info("Aucun trunk trouvé. Création d'un nouveau trunk.")
+                        trunk = client.trunking.trunks.create(friendly_name="LiveKit AI Trunk")
+                    else:
+                        trunk = trunks[0]
+                        logger.info(f"Trunk existant trouvé: {trunk.sid}")
 
                     # Configurer le domaine
                     domain_name = f"{trunk.sid}.sip.twilio.com"
@@ -157,6 +202,8 @@ def register_routes(app):
                     return {
                         "success": True,
                         "trunkId": trunk_id,
+                        "twilioTrunkSid": trunk.sid,
+                        "domainName": domain_name,
                         "message": "Trunk SIP configuré avec succès"
                     }
                 except Exception as e:
@@ -311,5 +358,3 @@ def register_routes(app):
                 "error": str(e),
                 "traceback": traceback.format_exc()
             }), 500
-
-    # Autres routes existantes peuvent être conservées si nécessaire
