@@ -234,19 +234,38 @@ def register_routes(app):
                     client = Client(account_sid, auth_token)
                     
                     logger.info("Récupération des trunks existants...")
-                    # Récupération ou création du trunk Twilio
-                    trunks = client.sip.trunks.list(limit=20)
+                    # Récupération ou création du trunk Twilio - CORRECTION: utilisation de v1
+                    trunks = client.sip.v1.trunks.list(limit=20)
                     
                     if trunks:
                         trunk = trunks[0]
                         logger.info(f"Utilisation du trunk existant: {trunk.sid}")
                     else:
                         logger.info("Création d'un nouveau trunk...")
-                        trunk = client.sip.trunks.create(friendly_name="LiveKit AI Trunk")
+                        # CORRECTION: utilisation de v1
+                        trunk = client.sip.v1.trunks.create(friendly_name="LiveKit AI Trunk")
                         logger.info(f"Nouveau trunk créé: {trunk.sid}")
                     
                     domain_name = f"{trunk.sid}.sip.twilio.com"
                     logger.info(f"Domaine SIP: {domain_name}")
+                    
+                    # Récupérer les credential lists
+                    logger.info("Récupération des credential lists...")
+                    # CORRECTION: utilisation de v1
+                    credential_lists = client.sip.v1.credential_lists.list(limit=20)
+                    
+                    if credential_lists:
+                        cred_list = credential_lists[0]
+                        logger.info(f"Utilisation de la credential list existante: {cred_list.sid}")
+                    else:
+                        logger.info("Création d'une nouvelle credential list...")
+                        # CORRECTION: utilisation de v1
+                        cred_list = client.sip.v1.credential_lists.create(friendly_name="LiveKit Credentials")
+                        # CORRECTION: utilisation de v1
+                        client.sip.v1.credential_lists(cred_list.sid).credentials.create(
+                            username="livekit_user", password="s3cur3p@ssw0rd"
+                        )
+                        logger.info(f"Nouvelle credential list créée: {cred_list.sid}")
                     
                     logger.info("Initialisation du client LiveKit...")
                     # Initialisation du client LiveKit
@@ -294,3 +313,35 @@ def register_routes(app):
                 "error": "Erreur lors de la configuration du trunk",
                 "details": traceback.format_exc()
             }), 500
+    
+    @app.route("/api/twilio/test-connect", methods=["GET"])
+    def test_twilio_connect():
+        """Endpoint pour tester directement la connexion et l'API Twilio"""
+        try:
+            from twilio.rest import Client
+            
+            account_sid = os.environ.get("TWILIO_ACCOUNT_SID")
+            auth_token = os.environ.get("TWILIO_AUTH_TOKEN")
+            
+            client = Client(account_sid, auth_token)
+            account = client.api.accounts(account_sid).fetch()
+            
+            # Vérifier les méthodes disponibles sur le client.sip
+            sip_methods = dir(client.sip)
+            
+            return jsonify({
+                "success": True,
+                "account": {
+                    "sid": account.sid,
+                    "status": account.status,
+                    "name": account.friendly_name
+                },
+                "sip_methods": sip_methods
+            })
+        except Exception as e:
+            import traceback
+            return jsonify({
+                "success": False,
+                "error": str(e),
+                "traceback": traceback.format_exc()
+            })
