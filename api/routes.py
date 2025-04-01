@@ -29,11 +29,13 @@ def register_routes(app):
             script_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "scripts", "setup_dispatch.py")
             
             # Exécuter le script dans un processus séparé
+            process_env = os.environ.copy()
             process = subprocess.Popen(
                 [sys.executable, script_path, "--phone", phone_number],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True
+                text=True,
+                env=process_env  # Transmettre toutes les variables d'environnement
             )
             
             stdout, stderr = process.communicate()
@@ -75,11 +77,13 @@ def register_routes(app):
             script_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "scripts", "setup_trunk.py")
             
             # Exécuter le script avec l'option Twilio
+            process_env = os.environ.copy()
             process = subprocess.Popen(
                 [sys.executable, script_path, "--twilio"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True
+                text=True,
+                env=process_env  # Transmettre toutes les variables d'environnement
             )
             
             stdout, stderr = process.communicate()
