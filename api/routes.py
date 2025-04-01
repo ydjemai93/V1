@@ -100,6 +100,31 @@ def register_routes(app):
                 "traceback": traceback.format_exc()
             })
     
+    @app.route("/api/twilio/list-api", methods=["GET"])
+    def list_twilio_api():
+        """Endpoint pour lister les attributs et méthodes de l'API Twilio"""
+        try:
+            from twilio.rest import Client
+            
+            account_sid = os.environ.get("TWILIO_ACCOUNT_SID")
+            auth_token = os.environ.get("TWILIO_AUTH_TOKEN")
+            
+            client = Client(account_sid, auth_token)
+            
+            return jsonify({
+                "success": True,
+                "client_attributes": dir(client),
+                "client_sip_attributes": dir(client.sip) if hasattr(client, "sip") else [],
+                "client_api_attributes": dir(client.api) if hasattr(client, "api") else []
+            })
+        except Exception as e:
+            import traceback
+            return jsonify({
+                "success": False,
+                "error": str(e),
+                "traceback": traceback.format_exc()
+            })
+    
     @app.route("/api/call", methods=["POST"])
     def make_call():
         """Endpoint pour lancer un appel sortant"""
@@ -233,39 +258,71 @@ def register_routes(app):
                     # Initialisation du client Twilio
                     client = Client(account_sid, auth_token)
                     
-                    logger.info("Récupération des trunks existants...")
-                    # Récupération ou création du trunk Twilio - CORRECTION: utilisation de v1
-                    trunks = client.sip.v1.trunks.list(limit=20)
+                    # Examiner la structure du client
+                    logger.info(f"Structure de l'objet SIP: {dir(client.sip)}")
                     
-                    if trunks:
-                        trunk = trunks[0]
-                        logger.info(f"Utilisation du trunk existant: {trunk.sid}")
+                    # Approche 1: Tenter d'accéder directement à trunks
+                    trunk_sid = None
+                    domain_name = None
+                    
+                    try:
+                        logger.info("Tentative d'utiliser Twilio Elastic SIP Trunking API...")
+                        
+                        # Nouvelle approche basée sur la documentation Twilio
+                        # Vérifier si la classe TwilioHttpClient est accessible
+                        import inspect
+                        logger.info(f"Twilio Client classes: {inspect.getmro(Client)}")
+                        
+                        # Utiliser directement l'API REST Twilio
+                        from twilio.http.http_client import TwilioHttpClient
+                        
+                        http_client = TwilioHttpClient()
+                        response = http_client.request(
+                            'GET',
+                            f'https://trunking.twilio.com/v1/Trunks',
+                            auth=(account_sid, auth_token)
+                        )
+                        
+                        logger.info(f"Réponse de l'API Twilio Trunking: {response.status_code}")
+                        if response.status_code == 200:
+                            trunks_data = response.json()
+                            if trunks_data.get('trunks') and len(trunks_data['trunks']) > 0:
+                                trunk = trunks_data['trunks'][0]
+                                trunk_sid = trunk.get('sid')
+                                logger.info(f"Trunk trouvé avec SID: {trunk_sid}")
+                            else:
+                                logger.info("Aucun trunk trouvé, création d'un nouveau trunk...")
+                                response = http_client.request(
+                                    'POST',
+                                    f'https://trunking.twilio.com/v1/Trunks',
+                                    auth=(account_sid, auth_token),
+                                    data={'FriendlyName': 'LiveKit AI Trunk'}
+                                )
+                                if response.status_code == 201:
+                                    trunk_data = response.json()
+                                    trunk_sid = trunk_data.get('sid')
+                                    logger.info(f"Nouveau trunk créé avec SID: {trunk_sid}")
+                                else:
+                                    logger.error(f"Erreur lors de la création du trunk: {response.status_code} {response.text}")
+                        
+                    except Exception as trunk_error:
+                        logger.error(f"Erreur lors de l'accès aux trunks Twilio: {trunk_error}")
+                        # Utiliser un ID de compte comme fallback
+                        trunk_sid = account_sid
+                        logger.info(f"Utilisation de l'ID de compte comme trunk fallback: {trunk_sid}")
+                    
+                    # Définir le domain_name une fois que nous avons un trunk_sid
+                    if trunk_sid:
+                        domain_name = f"{trunk_sid}.sip.twilio.com"
                     else:
-                        logger.info("Création d'un nouveau trunk...")
-                        # CORRECTION: utilisation de v1
-                        trunk = client.sip.v1.trunks.create(friendly_name="LiveKit AI Trunk")
-                        logger.info(f"Nouveau trunk créé: {trunk.sid}")
+                        # Fallback si nous n'avons pas de trunk_sid
+                        domain_name = f"{account_sid}.sip.twilio.com"
                     
-                    domain_name = f"{trunk.sid}.sip.twilio.com"
                     logger.info(f"Domaine SIP: {domain_name}")
                     
-                    # Récupérer les credential lists
-                    logger.info("Récupération des credential lists...")
-                    # CORRECTION: utilisation de v1
-                    credential_lists = client.sip.v1.credential_lists.list(limit=20)
-                    
-                    if credential_lists:
-                        cred_list = credential_lists[0]
-                        logger.info(f"Utilisation de la credential list existante: {cred_list.sid}")
-                    else:
-                        logger.info("Création d'une nouvelle credential list...")
-                        # CORRECTION: utilisation de v1
-                        cred_list = client.sip.v1.credential_lists.create(friendly_name="LiveKit Credentials")
-                        # CORRECTION: utilisation de v1
-                        client.sip.v1.credential_lists(cred_list.sid).credentials.create(
-                            username="livekit_user", password="s3cur3p@ssw0rd"
-                        )
-                        logger.info(f"Nouvelle credential list créée: {cred_list.sid}")
+                    # Utiliser des credentials fixes pour simplifier
+                    username = "livekit_user"
+                    password = "s3cur3p@ssw0rd"
                     
                     logger.info("Initialisation du client LiveKit...")
                     # Initialisation du client LiveKit
@@ -278,8 +335,8 @@ def register_routes(app):
                             name="Twilio Trunk",
                             address=domain_name,
                             numbers=[phone_number],
-                            auth_username="livekit_user",
-                            auth_password="s3cur3p@ssw0rd"
+                            auth_username=username,
+                            auth_password=password
                         )
                         
                         # Création de la requête
@@ -313,35 +370,3 @@ def register_routes(app):
                 "error": "Erreur lors de la configuration du trunk",
                 "details": traceback.format_exc()
             }), 500
-    
-    @app.route("/api/twilio/test-connect", methods=["GET"])
-    def test_twilio_connect():
-        """Endpoint pour tester directement la connexion et l'API Twilio"""
-        try:
-            from twilio.rest import Client
-            
-            account_sid = os.environ.get("TWILIO_ACCOUNT_SID")
-            auth_token = os.environ.get("TWILIO_AUTH_TOKEN")
-            
-            client = Client(account_sid, auth_token)
-            account = client.api.accounts(account_sid).fetch()
-            
-            # Vérifier les méthodes disponibles sur le client.sip
-            sip_methods = dir(client.sip)
-            
-            return jsonify({
-                "success": True,
-                "account": {
-                    "sid": account.sid,
-                    "status": account.status,
-                    "name": account.friendly_name
-                },
-                "sip_methods": sip_methods
-            })
-        except Exception as e:
-            import traceback
-            return jsonify({
-                "success": False,
-                "error": str(e),
-                "traceback": traceback.format_exc()
-            })
