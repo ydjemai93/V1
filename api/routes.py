@@ -68,6 +68,27 @@ def register_routes(app):
         except Exception as e:
             logger.exception("Erreur lors de l'appel")
             return jsonify({"error": str(e)}), 500
+
+
+# Ajouter cet endpoint à votre fichier routes.py
+
+@app.route("/api/twilio/test", methods=["GET"])
+def test_twilio_env():
+    """Endpoint pour tester les variables d'environnement Twilio"""
+    account_sid = os.environ.get("TWILIO_ACCOUNT_SID")
+    auth_token = os.environ.get("TWILIO_AUTH_TOKEN") 
+    phone_number = os.environ.get("TWILIO_PHONE_NUMBER")
+    
+    return jsonify({
+        "variables_present": {
+            "TWILIO_ACCOUNT_SID": bool(account_sid),
+            "TWILIO_AUTH_TOKEN": bool(auth_token),
+            "TWILIO_PHONE_NUMBER": bool(phone_number)
+        },
+        "account_sid_prefix": account_sid[:4] + "..." if account_sid else None,
+        "all_variables_present": all([account_sid, auth_token, phone_number])
+    })
+    
     
     @app.route("/api/trunk/setup", methods=["POST"])
     def setup_trunk():
