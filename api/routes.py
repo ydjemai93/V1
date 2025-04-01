@@ -345,9 +345,25 @@ def register_routes(app):
                         # Envoi de la requête à LiveKit
                         logger.info("Envoi de la requête à LiveKit...")
                         response = await livekit_api.sip.create_sip_outbound_trunk(request)
-                        logger.info(f"Trunk SIP créé avec succès: {response.sid}")
                         
-                        return {"success": True, "trunkId": response.sid, "message": "Trunk SIP configuré avec succès"}
+                        # Récupérez le bon attribut pour l'ID du trunk de la réponse LiveKit
+                        # CORRECTION: Utiliser response.id ou autre attribut au lieu de response.sid
+                        trunk_id = getattr(response, "id", None)
+                        if not trunk_id:
+                            # Recherche d'autres attributs possibles
+                            for attr in dir(response):
+                                if attr.lower().endswith('id') and not attr.startswith('_'):
+                                    trunk_id = getattr(response, attr)
+                                    break
+                        
+                        # Si on ne trouve pas d'ID, essayons de convertir la réponse en string
+                        if not trunk_id:
+                            trunk_id = str(response)
+                            
+                        logger.info(f"Trunk SIP créé avec succès. Réponse: {response}")
+                        logger.info(f"Attributs de la réponse: {dir(response)}")
+                        
+                        return {"success": True, "trunkId": trunk_id, "message": "Trunk SIP configuré avec succès"}
                     finally:
                         await livekit_api.aclose()
                 except Exception as e:
