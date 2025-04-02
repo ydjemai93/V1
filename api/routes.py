@@ -509,76 +509,88 @@ def register_routes(app):
                 "traceback": traceback.format_exc()
             }), 500
     
-    @app.route("/api/trunk/status", methods=["GET"])
-    def check_trunk_status():
-        """Endpoint pour vérifier l'état du trunk SIP outbound"""
-        try:
-            from livekit import api
-            
-            async def check_trunk():
-                livekit_api = None
-                try:
-                    livekit_api = api.LiveKitAPI()
-                    
-                    # Récupérer l'ID du trunk
-                    trunk_id = os.getenv('OUTBOUND_TRUNK_ID')
-                    if not trunk_id:
-                        return {
-                            "success": False,
-                            "error": "Aucun trunk SIP configuré"
-                        }
-                    
-                    # Vérifier le trunk dans LiveKit
-                    trunks = await livekit_api.sip.list_sip_outbound_trunk(
-                        api.ListSIPOutboundTrunkRequest(ids=[trunk_id])
-                    )
-                    
-                    # Vérifier le trunk dans Twilio
-                    from twilio.rest import Client
-                    account_sid = os.environ.get('TWILIO_ACCOUNT_SID')
-                    auth_token = os.environ.get('TWILIO_AUTH_TOKEN')
-                    
-                    twilio_trunk_info = None
-                    if account_sid and auth_token:
-                        client = Client(account_sid, auth_token)
-                        twilio_trunks = list(client.trunking.trunks.list(limit=1))
-                        if twilio_trunks:
-                            twilio_trunk_info = {
-                                "sid": twilio_trunks[0].sid,
-                                "name": twilio_trunks[0].friendly_name,
-                                "domain": f"{twilio_trunks[0].sid}.sip.twilio.com"
-                            }
-                    
-                    return {
-                        "success": True,
-                        "livekit_trunk": {
-                            "id": trunk_id,
-                            "exists": len(trunks.trunks) > 0,
-                            "details": {
-                                "name": trunks.trunks[0].name if trunks.trunks else None,
-                                "address": trunks.trunks[0].address if trunks.trunks else None,
-                                "numbers": trunks.trunks[0].numbers if trunks.trunks else None
-                            } if trunks.trunks else None
-                        },
-                        "twilio_trunk": twilio_trunk_info
-                    }
-                    
-                except Exception as e:
+  @app.route("/api/trunk/status", methods=["GET"])
+def check_trunk_status():
+    """Endpoint pour vérifier l'état du trunk SIP outbound"""
+    try:
+        from livekit import api
+        
+        async def check_trunk():
+            livekit_api = None
+            try:
+                livekit_api = api.LiveKitAPI()
+                
+                # Récupérer l'ID du trunk
+                trunk_id = os.getenv('OUTBOUND_TRUNK_ID')
+                if not trunk_id:
                     return {
                         "success": False,
-                        "error": str(e),
-                        "traceback": traceback.format_exc()
+                        "error": "Aucun trunk SIP configuré"
                     }
-                finally:
-                    if livekit_api:
-                        await livekit_api.aclose()
-            
-            result = asyncio.run(check_trunk())
-            return jsonify(result)
+                
+                # Vérifier le trunk dans LiveKit - modification pour corriger l'erreur
+                # Au lieu de filtrer par ID, nous allons récupérer tous les trunks et filtrer manuellement
+                try:
+                    # Récupérer tous les trunks outbound
+                    trunks_response = await livekit_api.sip.list_sip_outbound_trunk(
+                        api.ListSIPOutboundTrunkRequest()
+                    )
+                    
+                    # Filtrer manuellement pour trouver le trunk avec l'ID correspondant
+                    matching_trunks = [t for t in trunks_response.trunks if t.sid == trunk_id]
+                    trunk_exists = len(matching_trunks) > 0
+                    trunk_details = matching_trunks[0] if trunk_exists else None
+                except Exception as e:
+                    logger.error(f"Erreur lors de la récupération des trunks LiveKit: {e}")
+                    trunk_exists = False
+                    trunk_details = None
+                
+                # Vérifier le trunk dans Twilio
+                from twilio.rest import Client
+                account_sid = os.environ.get('TWILIO_ACCOUNT_SID')
+                auth_token = os.environ.get('TWILIO_AUTH_TOKEN')
+                
+                twilio_trunk_info = None
+                if account_sid and auth_token:
+                    client = Client(account_sid, auth_token)
+                    twilio_trunks = list(client.trunking.trunks.list(limit=1))
+                    if twilio_trunks:
+                        twilio_trunk_info = {
+                            "sid": twilio_trunks[0].sid,
+                            "name": twilio_trunks[0].friendly_name,
+                            "domain": f"{twilio_trunks[0].sid}.sip.twilio.com"
+                        }
+                
+                return {
+                    "success": True,
+                    "livekit_trunk": {
+                        "id": trunk_id,
+                        "exists": trunk_exists,
+                        "details": {
+                            "name": trunk_details.name if trunk_details else None,
+                            "address": trunk_details.address if trunk_details else None,
+                            "numbers": trunk_details.numbers if trunk_details else None
+                        } if trunk_details else None
+                    },
+                    "twilio_trunk": twilio_trunk_info
+                }
+                
+            except Exception as e:
+                return {
+                    "success": False,
+                    "error": str(e),
+                    "traceback": traceback.format_exc()
+                }
+            finally:
+                if livekit_api:
+                    await livekit_api.aclose()
         
-        except Exception as e:
-            return jsonify({
-                "success": False,
-                "error": str(e),
-                "traceback": traceback.format_exc()
-            }), 500
+        result = asyncio.run(check_trunk())
+        return jsonify(result)
+    
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
