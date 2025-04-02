@@ -380,9 +380,8 @@ def register_routes(app):
                         }
                     
                     # Vérifier que l'agent est disponible
-                    # Correction : utilisation de list_agents et ListAgentsRequest
-                    agents = await livekit_api.agent_dispatch.list_agents(
-                        api.ListAgentsRequest()
+                    agents = await livekit_api.agent_dispatch.list_agent_info(
+                        api.ListAgentInfoRequest()
                     )
                     agent_available = any(agent.name == "outbound-caller" for agent in agents.agents)
                     if not agent_available:
@@ -472,9 +471,8 @@ def register_routes(app):
                     livekit_api = api.LiveKitAPI()
                     
                     # Récupérer les agents disponibles
-                    # Correction : utilisation de list_agents et ListAgentsRequest
-                    agents = await livekit_api.agent_dispatch.list_agents(
-                        api.ListAgentsRequest()
+                    agents = await livekit_api.agent_dispatch.list_agent_info(
+                        api.ListAgentInfoRequest()
                     )
                     
                     active_agents = []
