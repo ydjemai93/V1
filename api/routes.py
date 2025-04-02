@@ -765,4 +765,81 @@ def register_routes(app):
                     
                     log_collector.info(f"====== TEST D'APPEL DIRECT ======")
                     log_collector.info(f"Numéro de téléphone: {phone_number}")
-                    log_collector.info(f
+                    log_collector.info(f"Trunk ID: {trunk_id}")
+                    log_collector.info(f"Room Name: {room_name}")
+                    
+                    # Création de la requête SIP
+                    request = CreateSIPParticipantRequest(
+                        room_name=room_name,
+                        sip_trunk_id=trunk_id,
+                        sip_call_to=phone_number,
+                        participant_identity=f"test_user_{phone_number}",
+                        participant_name=f"Test Call {phone_number}",
+                        play_dialtone=True,
+                    )
+                    
+                    # Envoi de la requête
+                    log_collector.info(f"Envoi de la requête SIP: {request}")
+                    response = await livekit_api.sip.create_sip_participant(request)
+                    log_collector.info(f"Réponse SIP reçue: {response}")
+                    
+                    # Attendre quelques secondes pour permettre à l'appel de démarrer
+                    log_collector.info("Attente pendant l'établissement de l'appel...")
+                    await asyncio.sleep(5)
+                    
+                    # Vérifier si la room existe et contient des participants
+                    room_info = await livekit_api.room.list_rooms(api.ListRoomsRequest(names=[room_name]))
+                    
+                    if room_info.rooms:
+                        room = room_info.rooms[0]
+                        log_collector.info(f"Room créée. Nombre de participants: {room.num_participants}")
+                        
+                        # Surveiller la room pendant un certain temps
+                        log_collector.info("Surveillance de la room pour 60 secondes...")
+                        for i in range(12):  # 60 secondes au total
+                            await asyncio.sleep(5)
+                            room_info = await livekit_api.room.list_rooms(api.ListRoomsRequest(names=[room_name]))
+                            if not room_info.rooms:
+                                log_collector.info("La room n'existe plus, l'appel s'est terminé")
+                                break
+                                
+                            room = room_info.rooms[0]
+                            log_collector.info(f"Statut de la room après {(i+1)*5} secondes: {room.num_participants} participants")
+                    else:
+                        log_collector.warning("La room n'a pas été créée ou a déjà été supprimée")
+                    
+                    log_collector.info("Fin du test d'appel direct")
+                    
+                    return {
+                        "success": True,
+                        "message": f"Test d'appel direct exécuté pour {phone_number}",
+                        "roomName": room_name,
+                        "logs": log_collector.logs
+                    }
+                    
+                except Exception as e:
+                    log_collector.error(f"Erreur lors du test d'appel direct: {e}")
+                    import traceback
+                    trace = traceback.format_exc()
+                    log_collector.error(trace)
+                    return {
+                        "success": False,
+                        "error": str(e),
+                        "traceback": trace,
+                        "logs": log_collector.logs
+                    }
+                finally:
+                    if livekit_api:
+                        await livekit_api.aclose()
+            
+            # Exécuter la fonction d'appel direct
+            result = asyncio.run(make_direct_call())
+            return jsonify(result)
+            
+        except Exception as e:
+            logger.exception("Erreur lors de l'exécution du test d'appel direct")
+            return jsonify({
+                "success": False,
+                "error": str(e),
+                "traceback": traceback.format_exc()
+            }), 500
