@@ -44,6 +44,15 @@ class OutboundCaller:
         logger.info(f"Trunk ID: {self.trunk_id}")
         logger.info(f"Room Name: {self.room.name}")
 
+        # Vérification du format du numéro de téléphone
+        if not phone_number.startswith('+'):
+            logger.warning(f"Le numéro de téléphone {phone_number} ne commence pas par '+'. Ajout du préfixe...")
+            phone_number = f"+{phone_number}"
+        
+        # Supprimer les caractères spéciaux comme tirets ou espaces
+        phone_number = ''.join(c for c in phone_number if c.isdigit() or c == '+')
+        logger.info(f"Numéro formaté pour l'appel: {phone_number}")
+        
         if not phone_number:
             logger.error("ERREUR: Numéro de téléphone manquant")
             raise ValueError("Numéro de téléphone requis pour passer un appel")
@@ -151,11 +160,23 @@ class OutboundCaller:
         try:
             logger.info(f"Début de la surveillance de l'appel pour {participant.identity}")
             
+            # Ajouter un compteur pour afficher les attributs périodiquement
+            counter = 0
+            
             while True:
                 # Vérifier si le participant est toujours connecté
                 if participant.identity not in self.room.remote_participants:
                     logger.info(f"Le participant {participant.identity} a quitté la room")
                     return
+                
+                # Récupérer le participant à jour (au cas où il aurait été mis à jour)
+                participant = self.room.remote_participants.get(participant.identity)
+                
+                # Vérifier tous les attributs du participant
+                if counter % 10 == 0:  # Afficher les détails toutes les 5 secondes environ
+                    logger.info(f"Attributs du participant {participant.identity}:")
+                    for attr_name, attr_value in participant.attributes.items():
+                        logger.info(f"  {attr_name}: {attr_value}")
                 
                 # Vérifier l'état de l'appel via les attributs du participant
                 call_status = participant.attributes.get("sip.callStatus")
@@ -164,17 +185,29 @@ class OutboundCaller:
                 
                 if call_status == "active":
                     # L'appel est actif, continuer à surveiller
-                    pass
+                    if counter % 10 == 0:
+                        logger.info(f"L'appel est actif avec {participant.identity}")
                 elif call_status == "hangup":
                     logger.info(f"L'appel avec {participant.identity} a été raccroché")
                     return
                 elif call_status == "terminated":
                     logger.info(f"L'appel avec {participant.identity} est terminé")
                     return
-                
+                elif call_status == "automating":
+                    # L'appel est en cours de numérotation, par exemple pour les extensions DTMF
+                    if counter % 10 == 0:
+                        logger.info(f"L'appel est en cours de numérotation (DTMF) pour {participant.identity}")
+                elif call_status is None:
+                    if counter % 10 == 0:
+                        logger.warning(f"L'attribut sip.callStatus est absent pour {participant.identity}")
+                else:
+                    logger.info(f"Statut d'appel détecté: {call_status}")
+                    
+                counter += 1
                 await asyncio.sleep(check_interval)
         except Exception as e:
             logger.error(f"Erreur lors de la surveillance de l'appel : {e}")
+            logger.exception("Détails de l'erreur:")
     
     async def end_call(self, participant):
         """
@@ -194,3 +227,4 @@ class OutboundCaller:
             logger.info(f"Appel avec {participant.identity} terminé avec succès")
         except Exception as e:
             logger.error(f"Erreur lors de la terminaison de l'appel : {e}")
+            logger.exception("Détails de l'erreur:")
