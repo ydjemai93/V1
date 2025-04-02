@@ -38,10 +38,19 @@ class OutboundCaller:
             Exception si l'appel échoue ou expire
         """
         # Logs détaillés de l'appel
+        logger.info(f"====== DÉMARRAGE DE L'APPEL ======")
         logger.info(f"Détails de l'appel:")
         logger.info(f"Numéro de téléphone: {phone_number}")
         logger.info(f"Trunk ID: {self.trunk_id}")
         logger.info(f"Room Name: {self.room.name}")
+
+        if not phone_number:
+            logger.error("ERREUR: Numéro de téléphone manquant")
+            raise ValueError("Numéro de téléphone requis pour passer un appel")
+
+        if not self.trunk_id:
+            logger.error("ERREUR: Trunk ID manquant")
+            raise ValueError("Trunk ID requis pour passer un appel")
 
         user_identity = f"phone_user_{phone_number}"
         
@@ -60,7 +69,9 @@ class OutboundCaller:
         
         try:
             # Lancement de l'appel via l'API LiveKit
-            await self.api.sip.create_sip_participant(request)
+            logger.info(f"Envoi de la requête à LiveKit SIP: {request}")
+            sip_response = await self.api.sip.create_sip_participant(request)
+            logger.info(f"Réponse SIP reçue: {sip_response}")
             
             # Attente que le participant rejoigne la room
             participant = await self._wait_for_participant_to_join(user_identity, timeout)
@@ -69,7 +80,8 @@ class OutboundCaller:
             return participant
         
         except Exception as e:
-            logger.error(f"Erreur lors du démarrage de l'appel: {e}")
+            logger.error(f"ERREUR lors du démarrage de l'appel: {e}")
+            logger.exception("Détails de l'erreur:")
             raise
     
     async def _wait_for_participant_to_join(self, identity, timeout):
@@ -137,6 +149,8 @@ class OutboundCaller:
             check_interval: Intervalle entre les vérifications en secondes
         """
         try:
+            logger.info(f"Début de la surveillance de l'appel pour {participant.identity}")
+            
             while True:
                 # Vérifier si le participant est toujours connecté
                 if participant.identity not in self.room.remote_participants:
@@ -170,6 +184,7 @@ class OutboundCaller:
             participant: Participant SIP à déconnecter
         """
         try:
+            logger.info(f"Tentative de fin d'appel pour {participant.identity}")
             await self.api.room.remove_participant(
                 api.RoomParticipantIdentity(
                     room=self.room.name,
