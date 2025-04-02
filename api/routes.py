@@ -361,6 +361,7 @@ def register_routes(app):
             return jsonify({"error": "Numéro de téléphone manquant"}), 400
         
         phone_number = data["phone"]
+        verbose = data.get("verbose", False)  # Option pour avoir plus de détails
         
         try:
             from livekit import api
@@ -378,28 +379,59 @@ def register_routes(app):
                             "error": "Aucun trunk SIP configuré. Utilisez /api/trunk/setup/direct d'abord."
                         }
                     
+                    # Vérifier que l'agent est disponible
+                    agents = await livekit_api.agent_dispatch.list_agent_info(
+                        api.ListAgentInfoRequest()
+                    )
+                    agent_available = any(agent.name == "outbound-caller" for agent in agents.agents)
+                    if not agent_available:
+                        return {
+                            "success": False,
+                            "error": "L'agent 'outbound-caller' n'est pas disponible. Vérifiez que le worker est en cours d'exécution."
+                        }
+                    
                     # Génération d'un nom de room unique
                     unique_room_name = f"call-{secrets.token_hex(4)}"
                     
+                    # Journalisation détaillée
+                    logger.info(f"Préparation de l'appel vers {phone_number}")
+                    logger.info(f"Trunk ID: {trunk_id}")
+                    logger.info(f"Room: {unique_room_name}")
+                    
                     # Création du dispatch
-                    dispatch = await livekit_api.agent_dispatch.create_dispatch(
-                        api.CreateAgentDispatchRequest(
-                            agent_name="outbound-caller",
-                            room=unique_room_name,
-                            metadata=json.dumps({
-                                "phone_number": phone_number,
-                                "trunk_id": trunk_id
-                            })
-                        )
+                    dispatch_request = api.CreateAgentDispatchRequest(
+                        agent_name="outbound-caller",
+                        room=unique_room_name,
+                        metadata=json.dumps({
+                            "phone_number": phone_number,
+                            "trunk_id": trunk_id
+                        })
                     )
+                    
+                    logger.info(f"Envoi de la requête de dispatch: {dispatch_request}")
+                    dispatch = await livekit_api.agent_dispatch.create_dispatch(dispatch_request)
+                    logger.info(f"Dispatch créé: {dispatch}")
+                    
+                    # Attendre brièvement pour vérifier si la room est créée
+                    await asyncio.sleep(1)
+                    rooms_check = await livekit_api.room.list_rooms(api.ListRoomsRequest(names=[unique_room_name]))
                     
                     return {
                         "success": True,
                         "roomName": dispatch.room,
                         "dispatchId": dispatch.id,
-                        "message": f"Appel initié pour {phone_number}"
+                        "message": f"Appel initié pour {phone_number}",
+                        "diagnostic": {
+                            "agent_available": agent_available,
+                            "trunk_id": trunk_id,
+                            "room_created": len(rooms_check.rooms) > 0,
+                            "metadata": {
+                                "phone_number": phone_number,
+                                "trunk_id": trunk_id
+                            }
+                        } if verbose else None
                     }
-                
+                    
                 except Exception as e:
                     logger.error(f"Erreur lors de l'appel: {e}")
                     return {
@@ -421,6 +453,130 @@ def register_routes(app):
         
         except Exception as e:
             logger.exception("Erreur lors de l'appel")
+            return jsonify({
+                "success": False,
+                "error": str(e),
+                "traceback": traceback.format_exc()
+            }), 500
+    
+    @app.route("/api/agent/status", methods=["GET"])
+    def check_agent_status():
+        """Endpoint pour vérifier si l'agent est en cours d'exécution et disponible"""
+        try:
+            from livekit import api
+            
+            async def check_agents():
+                livekit_api = None
+                try:
+                    livekit_api = api.LiveKitAPI()
+                    
+                    # Récupérer les agents disponibles
+                    agents = await livekit_api.agent_dispatch.list_agent_info(
+                        api.ListAgentInfoRequest()
+                    )
+                    
+                    active_agents = []
+                    for agent in agents.agents:
+                        active_agents.append({
+                            "name": agent.name,
+                            "status": "active",
+                            "capacity": agent.capacity,
+                        })
+                    
+                    return {
+                        "success": True,
+                        "agents": active_agents,
+                        "outbound_caller_available": any(agent.name == "outbound-caller" for agent in agents.agents)
+                    }
+                    
+                except Exception as e:
+                    return {
+                        "success": False,
+                        "error": str(e),
+                        "traceback": traceback.format_exc()
+                    }
+                finally:
+                    if livekit_api:
+                        await livekit_api.aclose()
+            
+            result = asyncio.run(check_agents())
+            return jsonify(result)
+        
+        except Exception as e:
+            return jsonify({
+                "success": False,
+                "error": str(e),
+                "traceback": traceback.format_exc()
+            }), 500
+    
+    @app.route("/api/trunk/status", methods=["GET"])
+    def check_trunk_status():
+        """Endpoint pour vérifier l'état du trunk SIP outbound"""
+        try:
+            from livekit import api
+            
+            async def check_trunk():
+                livekit_api = None
+                try:
+                    livekit_api = api.LiveKitAPI()
+                    
+                    # Récupérer l'ID du trunk
+                    trunk_id = os.getenv('OUTBOUND_TRUNK_ID')
+                    if not trunk_id:
+                        return {
+                            "success": False,
+                            "error": "Aucun trunk SIP configuré"
+                        }
+                    
+                    # Vérifier le trunk dans LiveKit
+                    trunks = await livekit_api.sip.list_sip_outbound_trunk(
+                        api.ListSIPOutboundTrunkRequest(ids=[trunk_id])
+                    )
+                    
+                    # Vérifier le trunk dans Twilio
+                    from twilio.rest import Client
+                    account_sid = os.environ.get('TWILIO_ACCOUNT_SID')
+                    auth_token = os.environ.get('TWILIO_AUTH_TOKEN')
+                    
+                    twilio_trunk_info = None
+                    if account_sid and auth_token:
+                        client = Client(account_sid, auth_token)
+                        twilio_trunks = list(client.trunking.trunks.list(limit=1))
+                        if twilio_trunks:
+                            twilio_trunk_info = {
+                                "sid": twilio_trunks[0].sid,
+                                "name": twilio_trunks[0].friendly_name,
+                                "domain": f"{twilio_trunks[0].sid}.sip.twilio.com"
+                            }
+                    
+                    return {
+                        "success": True,
+                        "livekit_trunk": {
+                            "id": trunk_id,
+                            "exists": len(trunks.trunks) > 0,
+                            "details": {
+                                "name": trunks.trunks[0].name if trunks.trunks else None,
+                                "address": trunks.trunks[0].address if trunks.trunks else None,
+                                "numbers": trunks.trunks[0].numbers if trunks.trunks else None
+                            } if trunks.trunks else None
+                        },
+                        "twilio_trunk": twilio_trunk_info
+                    }
+                    
+                except Exception as e:
+                    return {
+                        "success": False,
+                        "error": str(e),
+                        "traceback": traceback.format_exc()
+                    }
+                finally:
+                    if livekit_api:
+                        await livekit_api.aclose()
+            
+            result = asyncio.run(check_trunk())
+            return jsonify(result)
+        
+        except Exception as e:
             return jsonify({
                 "success": False,
                 "error": str(e),
