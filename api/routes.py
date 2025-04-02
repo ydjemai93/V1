@@ -379,16 +379,10 @@ def register_routes(app):
                             "error": "Aucun trunk SIP configuré. Utilisez /api/trunk/setup/direct d'abord."
                         }
                     
-                    # Vérifier que l'agent est disponible
-                    agents = await livekit_api.agent_dispatch.list_agent_info(
-                        api.ListAgentInfoRequest()
-                    )
-                    agent_available = any(agent.name == "outbound-caller" for agent in agents.agents)
-                    if not agent_available:
-                        return {
-                            "success": False,
-                            "error": "L'agent 'outbound-caller' n'est pas disponible. Vérifiez que le worker est en cours d'exécution."
-                        }
+                    # Nous ne vérifions plus si l'agent est disponible car list_agent_info n'est pas disponible
+                    # Au lieu de cela, nous supposons que l'agent est en cours d'exécution
+                    # et nous laissons la création du dispatch échouer si ce n'est pas le cas
+                    agent_available = True  # On suppose que l'agent est disponible
                     
                     # Génération d'un nom de room unique
                     unique_room_name = f"call-{secrets.token_hex(4)}"
@@ -422,7 +416,7 @@ def register_routes(app):
                         "dispatchId": dispatch.id,
                         "message": f"Appel initié pour {phone_number}",
                         "diagnostic": {
-                            "agent_available": agent_available,
+                            "agent_available": agent_available,  # Présumé vrai
                             "trunk_id": trunk_id,
                             "room_created": len(rooms_check.rooms) > 0,
                             "metadata": {
@@ -470,24 +464,45 @@ def register_routes(app):
                 try:
                     livekit_api = api.LiveKitAPI()
                     
-                    # Récupérer les agents disponibles
-                    agents = await livekit_api.agent_dispatch.list_agent_info(
-                        api.ListAgentInfoRequest()
-                    )
+                    # Nous ne pouvons pas récupérer les agents avec list_agent_info
+                    # À la place, nous allons essayer de créer un dispatch pour voir si l'agent est disponible
                     
-                    active_agents = []
-                    for agent in agents.agents:
-                        active_agents.append({
-                            "name": agent.name,
-                            "status": "active",
-                            "capacity": agent.capacity,
-                        })
-                    
-                    return {
-                        "success": True,
-                        "agents": active_agents,
-                        "outbound_caller_available": any(agent.name == "outbound-caller" for agent in agents.agents)
-                    }
+                    # Création d'un dispatch temporaire pour tester si l'agent est disponible
+                    try:
+                        # Nom unique pour éviter des conflits
+                        test_room = f"test-agent-{secrets.token_hex(4)}"
+                        test_dispatch = await livekit_api.agent_dispatch.create_dispatch(
+                            api.CreateAgentDispatchRequest(
+                                agent_name="outbound-caller",
+                                room=test_room,
+                                metadata=json.dumps({"test": True})
+                            )
+                        )
+                        
+                        # Si on arrive ici, le dispatch a été créé, donc l'agent est disponible
+                        # Suppression de la room de test
+                        await livekit_api.room.delete_room(api.DeleteRoomRequest(room=test_room))
+                        
+                        return {
+                            "success": True,
+                            "agents": [
+                                {
+                                    "name": "outbound-caller",
+                                    "status": "active",
+                                    "capacity": 1.0
+                                }
+                            ],
+                            "outbound_caller_available": True
+                        }
+                        
+                    except Exception as e:
+                        # Si une erreur se produit, l'agent n'est probablement pas disponible
+                        logger.error(f"Erreur lors du test de l'agent: {e}")
+                        return {
+                            "success": True,
+                            "agents": [],
+                            "outbound_caller_available": False
+                        }
                     
                 except Exception as e:
                     return {
