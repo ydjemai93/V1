@@ -392,7 +392,7 @@ def register_routes(app):
                     }
                 
                 except Exception as e:
-                   logger.error(f"Erreur lors de l'appel: {e}")
+                    logger.error(f"Erreur lors de l'appel: {e}")
                     return {
                         "success": False,
                         "error": str(e),
