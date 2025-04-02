@@ -174,176 +174,109 @@ def register_routes(app):
                 "traceback": traceback.format_exc()
             }), 500
 
-    @app.route("/api/trunk/setup/direct", methods=["POST"])
-    def setup_trunk_direct():
-        """Endpoint pour configurer directement le trunk SIP via l'API"""
-        try:
-            import asyncio
-            from livekit import api
-            from livekit.protocol.sip import CreateSIPOutboundTrunkRequest, SIPOutboundTrunkInfo
-            from twilio.rest import Client
+   @app.route("/api/trunk/setup/direct", methods=["POST"])
+def setup_trunk_direct():
+    """Endpoint pour configurer directement le trunk SIP via l'API"""
+    try:
+        import asyncio
+        from livekit import api
+        from livekit.protocol.sip import CreateSIPOutboundTrunkRequest, SIPOutboundTrunkInfo
+        from twilio.rest import Client
 
-            async def setup_trunk_async():
-                # Variables Twilio
-                account_sid = os.environ.get('TWILIO_ACCOUNT_SID')
-                auth_token = os.environ.get('TWILIO_AUTH_TOKEN')
-                phone_number = os.environ.get('TWILIO_PHONE_NUMBER')
+        async def setup_trunk_async():
+            # Variables Twilio
+            account_sid = os.environ.get('TWILIO_ACCOUNT_SID')
+            auth_token = os.environ.get('TWILIO_AUTH_TOKEN')
+            phone_number = os.environ.get('TWILIO_PHONE_NUMBER')
+            livekit_api = None
 
-                if not all([account_sid, auth_token, phone_number]):
-                    return {
-                        "success": False,
-                        "error": "Variables Twilio manquantes"
-                    }
+            if not all([account_sid, auth_token, phone_number]):
+                return {
+                    "success": False,
+                    "error": "Variables Twilio manquantes"
+                }
 
+            try:
+                # Client Twilio
+                client = Client(account_sid, auth_token)
+                
+                # Débogage - impression des attributs du client
+                logger.info(f"Attributs du client Twilio: {dir(client)}")
+                logger.info(f"Attributs de trunking: {dir(client.trunking)}")
+                
                 try:
-                    # Client Twilio
-                    client = Client(account_sid, auth_token)
-                    
-                    # Débogage - impression des attributs du client
-                    logger.info(f"Attributs du client Twilio: {dir(client)}")
-                    logger.info(f"Attributs de trunking: {dir(client.trunking)}")
-                    
-                    try:
-                        # Essayer de récupérer les trunks
-                        trunks = list(client.trunking.trunks.list(limit=1))
-                    except Exception as e:
-                        logger.error(f"Erreur lors de la récupération des trunks: {e}")
-                        trunks = []
-                    
-                    # Créer un trunk si aucun n'existe
-                    if not trunks:
-                        logger.info("Aucun trunk trouvé. Création d'un nouveau trunk.")
-                        trunk = client.trunking.trunks.create(friendly_name="LiveKit AI Trunk")
-                    else:
-                        trunk = trunks[0]
-                        logger.info(f"Trunk existant trouvé: {trunk.sid}")
-
-                    # Configurer le domaine
-                    domain_name = f"{trunk.sid}.sip.twilio.com"
-
-                    # Initialisation du client LiveKit
-                    livekit_api = api.LiveKitAPI()
-                    
-                    # Création de l'objet trunk
-                    trunk_info = SIPOutboundTrunkInfo(
-                        name="Twilio Trunk",
-                        address=domain_name,
-                        numbers=[phone_number],
-                        auth_username="livekit_user",
-                        auth_password="s3cur3p@ssw0rd"
-                    )
-                    
-                    # Création de la requête
-                    request = CreateSIPOutboundTrunkRequest(trunk=trunk_info)
-                    
-                    # Envoi de la requête à LiveKit
-                    response = await livekit_api.sip.create_sip_outbound_trunk(request)
-                    
-                    # Récupérer l'ID du trunk
-                    trunk_id = getattr(response, 'sid', getattr(response, 'id', str(response)))
-                    
-                    # Mise à jour de l'environnement
-                    os.environ['OUTBOUND_TRUNK_ID'] = trunk_id
-
-                    return {
-                        "success": True,
-                        "trunkId": trunk_id,
-                        "twilioTrunkSid": trunk.sid,
-                        "domainName": domain_name,
-                        "message": "Trunk SIP configuré avec succès"
-                    }
+                    # Essayer de récupérer les trunks
+                    trunks = list(client.trunking.trunks.list(limit=1))
                 except Exception as e:
-                    logger.error(f"Erreur de configuration du trunk: {e}")
-                    return {
-                        "success": False,
-                        "error": str(e),
-                        "traceback": traceback.format_exc()
-                    }
+                    logger.error(f"Erreur lors de la récupération des trunks: {e}")
+                    trunks = []
+                
+                # Créer un trunk si aucun n'existe
+                if not trunks:
+                    logger.info("Aucun trunk trouvé. Création d'un nouveau trunk.")
+                    trunk = client.trunking.trunks.create(friendly_name="LiveKit AI Trunk")
+                else:
+                    trunk = trunks[0]
+                    logger.info(f"Trunk existant trouvé: {trunk.sid}")
 
-            # Exécuter la fonction asynchrone
-            result = asyncio.run(setup_trunk_async())
-            
-            return jsonify(result)
-        
-        except Exception as e:
-            logger.exception("Erreur lors de la configuration du trunk")
-            return jsonify({
-                "success": False,
-                "error": str(e),
-                "traceback": traceback.format_exc()
-            }), 500
+                # Configurer le domaine
+                domain_name = f"{trunk.sid}.sip.twilio.com"
 
-    @app.route("/api/dispatch/test", methods=["POST"])
-    def test_dispatch():
-        """Endpoint pour tester la création d'un dispatch"""
-        data = request.json
-        if not data or "phone" not in data:
-            return jsonify({"error": "Numéro de téléphone manquant"}), 400
-        
-        phone_number = data["phone"]
-        
-        try:
-            from livekit import api
-            
-            async def create_test_dispatch():
+                # Initialisation du client LiveKit
                 livekit_api = api.LiveKitAPI()
                 
-                try:
-                    # Vérifier si OUTBOUND_TRUNK_ID est défini
-                    trunk_id = os.getenv('OUTBOUND_TRUNK_ID')
-                    if not trunk_id:
-                        return {
-                            "success": False,
-                            "error": "Aucun trunk SIP configuré. Utilisez /api/trunk/setup/direct d'abord."
-                        }
-                    
-                    # Génération d'un nom de room unique
-                    unique_room_name = f"dispatch-{secrets.token_hex(4)}"
-                    
-                    # Création du dispatch - modification de la méthode
-                    dispatch = await livekit_api.agent_dispatch.create_dispatch(
-                        api.CreateAgentDispatchRequest(
-                            agent_name="outbound-caller",
-                            room=unique_room_name,
-                            metadata=json.dumps({
-                                "phone_number": phone_number,
-                                "trunk_id": trunk_id
-                            })
-                        )
-                    )
-                    
-                    return {
-                        "success": True,
-                        "roomName": dispatch.room,
-                        "dispatchId": dispatch.id,
-                        "message": f"Dispatch créé pour {phone_number}"
-                    }
+                # Création de l'objet trunk
+                trunk_info = SIPOutboundTrunkInfo(
+                    name="Twilio Trunk",
+                    address=domain_name,
+                    numbers=[phone_number],
+                    auth_username="livekit_user",
+                    auth_password="s3cur3p@ssw0rd"
+                )
                 
-                except Exception as e:
-                    logger.error(f"Erreur de dispatch: {e}")
-                    return {
-                        "success": False,
-                        "error": str(e),
-                        "traceback": traceback.format_exc()
-                    }
-                finally:
+                # Création de la requête
+                request = CreateSIPOutboundTrunkRequest(trunk=trunk_info)
+                
+                # Envoi de la requête à LiveKit
+                response = await livekit_api.sip.create_sip_outbound_trunk(request)
+                
+                # Récupérer l'ID du trunk
+                trunk_id = getattr(response, 'sid', getattr(response, 'id', str(response)))
+                
+                # Mise à jour de l'environnement
+                os.environ['OUTBOUND_TRUNK_ID'] = trunk_id
+
+                return {
+                    "success": True,
+                    "trunkId": trunk_id,
+                    "twilioTrunkSid": trunk.sid,
+                    "domainName": domain_name,
+                    "message": "Trunk SIP configuré avec succès"
+                }
+            except Exception as e:
+                logger.error(f"Erreur de configuration du trunk: {e}")
+                return {
+                    "success": False,
+                    "error": str(e),
+                    "traceback": traceback.format_exc()
+                }
+            finally:
+                # S'assurer que la session LiveKit est fermée
+                if livekit_api:
                     await livekit_api.aclose()
-            
-            # Exécuter la fonction asynchrone
-            result = asyncio.run(create_test_dispatch())
-            
-            if result['success']:
-                return jsonify(result)
-            else:
-                return jsonify(result), 500
+
+        # Exécuter la fonction asynchrone
+        result = asyncio.run(setup_trunk_async())
         
-        except Exception as e:
-            logger.exception("Erreur lors du test de dispatch")
-            return jsonify({
-                "success": False,
-                "error": str(e),
-                "traceback": traceback.format_exc()
-            }), 500
+        return jsonify(result)
+    
+    except Exception as e:
+        logger.exception("Erreur lors de la configuration du trunk")
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
 
     @app.route("/api/call", methods=["POST"])
     def make_call():
