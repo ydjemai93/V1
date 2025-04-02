@@ -704,3 +704,65 @@ def register_routes(app):
                 "error": str(e),
                 "traceback": traceback.format_exc()
             }), 500
+    
+    @app.route("/api/test-direct-call/<phone_number>", methods=["GET"])
+    def api_test_direct_call(phone_number):
+        """Endpoint pour exécuter le script de test d'appel direct"""
+        try:
+            # Vérifier et normaliser le format du numéro
+            if not phone_number.startswith('+'):
+                phone_number = f"+{phone_number}"
+            
+            # Supprimer les caractères spéciaux comme tirets ou espaces
+            phone_number = ''.join(c for c in phone_number if c.isdigit() or c == '+')
+            logger.info(f"Numéro formaté pour le test direct: {phone_number}")
+            
+            # Importation depuis le module (assurez-vous que scripts/test_direct_sip_call.py existe)
+            from livekit import api
+            from livekit.protocol.sip import CreateSIPParticipantRequest
+            
+            # Récupération du trunk ID
+            trunk_id = os.getenv('OUTBOUND_TRUNK_ID')
+            if not trunk_id:
+                return jsonify({
+                    "success": False,
+                    "error": "Aucun trunk SIP configuré. Utilisez /api/trunk/setup/direct d'abord."
+                })
+            
+            # Créer un collecteur de logs
+            class LogCollector:
+                def __init__(self):
+                    self.logs = []
+                
+                def info(self, message):
+                    self.logs.append(f"INFO: {message}")
+                    logger.info(message)
+                
+                def warning(self, message):
+                    self.logs.append(f"WARNING: {message}")
+                    logger.warning(message)
+                
+                def error(self, message):
+                    self.logs.append(f"ERROR: {message}")
+                    logger.error(message)
+                
+                def exception(self, message):
+                    self.logs.append(f"EXCEPTION: {message}")
+                    logger.exception(message)
+            
+            # Fonction d'appel direct
+            async def make_direct_call():
+                log_collector = LogCollector()
+                livekit_api = None
+                
+                try:
+                    # Initialisation du client LiveKit
+                    livekit_api = api.LiveKitAPI()
+                    
+                    # Création d'un nom de room unique
+                    import secrets
+                    room_name = f"test-call-{secrets.token_hex(4)}"
+                    
+                    log_collector.info(f"====== TEST D'APPEL DIRECT ======")
+                    log_collector.info(f"Numéro de téléphone: {phone_number}")
+                    log_collector.info(f
