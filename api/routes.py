@@ -846,123 +846,117 @@ def register_routes(app):
 
     @app.route("/api/trunk/reconfigure", methods=["POST"])
     def reconfigure_trunk():
-        """Supprime et reconfigure le trunk SIP avec des paramètres plus détaillés"""
-        try:
-            import asyncio
-            from livekit import api
-            from livekit.protocol.sip import CreateSIPOutboundTrunkRequest, SIPOutboundTrunkInfo, DeleteSIPOutboundTrunkRequest
-            from twilio.rest import Client
-    
-            async def reconfigure_trunk_async():
-                livekit_api = None
+    """Reconfigure le trunk SIP avec des paramètres plus détaillés"""
+    try:
+        import asyncio
+        from livekit import api
+        from livekit.protocol.sip import CreateSIPOutboundTrunkRequest, SIPOutboundTrunkInfo
+        from twilio.rest import Client
+
+        async def reconfigure_trunk_async():
+            livekit_api = None
+            try:
+                # Variables Twilio
+                account_sid = os.environ.get('TWILIO_ACCOUNT_SID')
+                auth_token = os.environ.get('TWILIO_AUTH_TOKEN')
+                phone_number = os.environ.get('TWILIO_PHONE_NUMBER')
+                existing_trunk_id = os.environ.get('OUTBOUND_TRUNK_ID')
+                
+                if not all([account_sid, auth_token, phone_number]):
+                    return {
+                        "success": False,
+                        "error": "Variables Twilio manquantes"
+                    }
+                
+                # Client LiveKit
+                livekit_api = api.LiveKitAPI()
+                
+                # Afficher l'ancien trunk ID
+                logger.info(f"Trunk ID existant: {existing_trunk_id}")
+                logger.info("Note: La suppression de trunk n'est pas supportée, nous allons créer un nouveau trunk")
+                
+                # Client Twilio
+                client = Client(account_sid, auth_token)
+                
+                # Récupérer ou créer un trunk Twilio
                 try:
-                    # Variables Twilio
-                    account_sid = os.environ.get('TWILIO_ACCOUNT_SID')
-                    auth_token = os.environ.get('TWILIO_AUTH_TOKEN')
-                    phone_number = os.environ.get('TWILIO_PHONE_NUMBER')
-                    existing_trunk_id = os.environ.get('OUTBOUND_TRUNK_ID')
+                    trunks = list(client.sip.trunks.list(limit=1))
+                    if trunks:
+                        trunk = trunks[0]
+                        logger.info(f"Utilisation du trunk Twilio existant: {trunk.sid}")
+                    else:
+                        trunk = client.sip.trunks.create(friendly_name="LiveKit AI Trunk")
+                        logger.info(f"Nouveau trunk Twilio créé: {trunk.sid}")
                     
-                    if not all([account_sid, auth_token, phone_number]):
-                        return {
-                            "success": False,
-                            "error": "Variables Twilio manquantes"
-                        }
-                    
-                    # Client LiveKit
-                    livekit_api = api.LiveKitAPI()
-                    
-                    # Supprimer l'ancien trunk s'il existe
-                    if existing_trunk_id:
-                        try:
-                            logger.info(f"Suppression du trunk existant: {existing_trunk_id}")
-                            await livekit_api.sip.delete_sip_outbound_trunk(
-                                DeleteSIPOutboundTrunkRequest(id=existing_trunk_id)
-                            )
-                            logger.info("Trunk existant supprimé avec succès")
-                        except Exception as e:
-                            logger.warning(f"Erreur lors de la suppression du trunk: {e}")
-                    
-                    # Client Twilio
-                    client = Client(account_sid, auth_token)
-                    
-                    # Récupérer ou créer un trunk Twilio
-                    try:
-                        trunks = list(client.sip.trunks.list(limit=1))
-                        if trunks:
-                            trunk = trunks[0]
-                            logger.info(f"Utilisation du trunk Twilio existant: {trunk.sid}")
-                        else:
-                            trunk = client.sip.trunks.create(friendly_name="LiveKit AI Trunk")
-                            logger.info(f"Nouveau trunk Twilio créé: {trunk.sid}")
-                        
-                        # Vérifier si une liste d'identifiants existe
-                        cred_lists = list(client.sip.credential_lists.list(limit=1))
-                        if not cred_lists:
-                            logger.info("Création d'une nouvelle credential list Twilio")
-                            cred_list = client.sip.credential_lists.create(friendly_name="LiveKit Credentials")
-                            client.sip.credential_lists(cred_list.sid).credentials.create(
-                                username="livekit_user", password="s3cur3p@ssw0rd"
-                            )
-                        else:
-                            cred_list = cred_lists[0]
-                            logger.info(f"Utilisation de la credential list existante: {cred_list.sid}")
-                            
-                        # Associer la liste d'identifiants au trunk
-                        try:
-                            client.sip.trunks(trunk.sid).credentials_lists(cred_list.sid).update()
-                            logger.info(f"Credential list associée au trunk")
-                        except Exception as e:
-                            logger.warning(f"Erreur lors de l'association de la credential list: {e}")
-                            
-                        # Configurer le domaine
-                        domain_name = f"{trunk.sid}.sip.twilio.com"
-                        
-                        # Créer un nouvel objet trunk SIP dans LiveKit
-                        trunk_info = SIPOutboundTrunkInfo(
-                            name="Twilio Trunk",
-                            address=domain_name,
-                            numbers=[phone_number],
-                            auth_username="livekit_user",
-                            auth_password="s3cur3p@ssw0rd"
+                    # Vérifier si une liste d'identifiants existe
+                    cred_lists = list(client.sip.credential_lists.list(limit=1))
+                    if not cred_lists:
+                        logger.info("Création d'une nouvelle credential list Twilio")
+                        cred_list = client.sip.credential_lists.create(friendly_name="LiveKit Credentials")
+                        client.sip.credential_lists(cred_list.sid).credentials.create(
+                            username="livekit_user", password="s3cur3p@ssw0rd"
                         )
+                    else:
+                        cred_list = cred_lists[0]
+                        logger.info(f"Utilisation de la credential list existante: {cred_list.sid}")
                         
-                        # Envoyer la requête à LiveKit
-                        request = CreateSIPOutboundTrunkRequest(trunk=trunk_info)
-                        response = await livekit_api.sip.create_sip_outbound_trunk(request)
-                        
-                        # Récupérer l'ID du nouveau trunk
-                        trunk_id = getattr(response, 'sid', getattr(response, 'id', str(response)))
-                        
-                        # Mettre à jour la variable d'environnement
-                        os.environ['OUTBOUND_TRUNK_ID'] = trunk_id
-                        
-                        return {
-                            "success": True,
-                            "trunkId": trunk_id,
-                            "twilioTrunkSid": trunk.sid,
-                            "domainName": domain_name,
-                            "message": "Trunk SIP reconfiguré avec succès"
-                        }
-                        
+                    # Associer la liste d'identifiants au trunk
+                    try:
+                        client.sip.trunks(trunk.sid).credentials_lists(cred_list.sid).update()
+                        logger.info(f"Credential list associée au trunk")
                     except Exception as e:
-                        logger.error(f"Erreur de configuration du trunk: {e}")
-                        return {
-                            "success": False,
-                            "error": str(e),
-                            "traceback": traceback.format_exc()
-                        }
-                finally:
-                    if livekit_api:
-                        await livekit_api.aclose()
-            
-            # Exécuter la fonction asynchrone
-            result = asyncio.run(reconfigure_trunk_async())
-            return jsonify(result)
-            
-        except Exception as e:
-            logger.exception("Erreur lors de la reconfiguration du trunk")
-            return jsonify({
-                "success": False,
-                "error": str(e),
-                "traceback": traceback.format_exc()
-            }), 500
+                        logger.warning(f"Erreur lors de l'association de la credential list: {e}")
+                        
+                    # Configurer le domaine
+                    domain_name = f"{trunk.sid}.sip.twilio.com"
+                    
+                    # Créer un nouvel objet trunk SIP dans LiveKit
+                    trunk_info = SIPOutboundTrunkInfo(
+                        name="Twilio Trunk",
+                        address=domain_name,
+                        numbers=[phone_number],
+                        auth_username="livekit_user",
+                        auth_password="s3cur3p@ssw0rd"
+                    )
+                    
+                    # Envoyer la requête à LiveKit
+                    request = CreateSIPOutboundTrunkRequest(trunk=trunk_info)
+                    response = await livekit_api.sip.create_sip_outbound_trunk(request)
+                    
+                    # Récupérer l'ID du nouveau trunk
+                    trunk_id = getattr(response, 'sid', getattr(response, 'id', str(response)))
+                    
+                    # Mettre à jour la variable d'environnement
+                    os.environ['OUTBOUND_TRUNK_ID'] = trunk_id
+                    
+                    return {
+                        "success": True,
+                        "old_trunk_id": existing_trunk_id,
+                        "new_trunk_id": trunk_id,
+                        "twilioTrunkSid": trunk.sid,
+                        "domainName": domain_name,
+                        "message": "Nouveau trunk SIP configuré avec succès"
+                    }
+                    
+                except Exception as e:
+                    logger.error(f"Erreur de configuration du trunk: {e}")
+                    return {
+                        "success": False,
+                        "error": str(e),
+                        "traceback": traceback.format_exc()
+                    }
+            finally:
+                if livekit_api:
+                    await livekit_api.aclose()
+        
+        # Exécuter la fonction asynchrone
+        result = asyncio.run(reconfigure_trunk_async())
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.exception("Erreur lors de la reconfiguration du trunk")
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
