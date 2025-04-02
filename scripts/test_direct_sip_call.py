@@ -2,7 +2,6 @@
 import asyncio
 import os
 import logging
-import argparse
 from dotenv import load_dotenv
 from livekit import api
 from livekit.protocol.sip import CreateSIPParticipantRequest
@@ -96,6 +95,7 @@ async def make_direct_call(phone_number):
         await livekit_api.aclose()
 
 def main():
+    import argparse
     parser = argparse.ArgumentParser(description='Test d\'appel direct via SIP')
     parser.add_argument('--phone', '-p', required=True, help='Numéro de téléphone à appeler')
     args = parser.parse_args()
