@@ -38,7 +38,7 @@ async def entrypoint(ctx: JobContext):
     """Point d'entrée principal de l'agent"""
     # Logs détaillés au début de l'entrypoint
     logger.info(f"DEBUT DE L'ENTRYPOINT")
-    logger.info(f"Métadonnées du job: {ctx.job.metadata}")
+    logger.info(f"Métadonnées du job brutes: {ctx.job.metadata}")
     
     # Initialisation du contexte de conversation
     initial_ctx = ChatContext().append(
@@ -55,13 +55,27 @@ async def entrypoint(ctx: JobContext):
 
     try:
         # Extraction du numéro de téléphone à partir des métadonnées
-        phone_number = json.loads(ctx.job.metadata).get('phone_number', None)
-        trunk_id = json.loads(ctx.job.metadata).get('trunk_id', None)
+        job_metadata = ctx.job.metadata
+        # Essayer de parser les métadonnées comme du JSON
+        try:
+            metadata_dict = json.loads(job_metadata)
+            phone_number = metadata_dict.get('phone_number', None)
+            trunk_id = metadata_dict.get('trunk_id', None)
+        except json.JSONDecodeError:
+            # Si les métadonnées ne sont pas du JSON (cas simple), utiliser directement
+            phone_number = job_metadata
+            trunk_id = None
         
         logger.info(f"Configuration de l'appel:")
         logger.info(f"Numéro de téléphone: {phone_number}")
         logger.info(f"Trunk ID: {trunk_id}")
         logger.info(f"Room: {ctx.room.name}")
+
+        # Vérification des valeurs extraites
+        if not phone_number:
+            logger.error("ERREUR CRITIQUE: Numéro de téléphone non trouvé dans les métadonnées")
+            ctx.shutdown(reason="Numéro de téléphone manquant")
+            return
 
         # Initialisation de l'agent vocal
         agent = VoicePipelineAgent(
@@ -103,42 +117,3 @@ async def entrypoint(ctx: JobContext):
             # Configurer l'agent pour utiliser les actions d'appel
             agent_llm = openai.LLM(
                 model="gpt-4o-mini",
-                fnc_ctx=call_actions,
-            )
-            agent.llm = agent_llm
-            
-            # Démarrage de l'agent vocal
-            agent.start(ctx.room, participant)
-            
-            # Premier message de l'agent
-            intro_message = (
-                f"Bonjour, je suis votre assistant virtuel. "
-                f"Comment puis-je vous aider aujourd'hui?"
-            )
-            await agent.say(intro_message, allow_interruptions=True)
-            
-            # Surveillance de l'état de l'appel
-            call_monitoring_task = asyncio.create_task(
-                outbound_caller.monitor_call_status(participant)
-            )
-            
-            # Attendre la fin de l'appel
-            await call_monitoring_task
-            
-        except Exception as e:
-            logger.error(f"Erreur lors de l'appel : {e}")
-            ctx.shutdown(reason=f"Erreur d'appel: {e}")
-    
-    except Exception as e:
-        logger.exception("Erreur dans l'entrypoint")
-        ctx.shutdown(reason=f"Erreur dans l'entrypoint: {e}")
-
-if __name__ == "__main__":
-    cli.run_app(
-        WorkerOptions(
-            entrypoint_fnc=entrypoint,
-            prewarm_fnc=prewarm,
-            # Désactivation de la répartition automatique pour utiliser l'API de dispatch explicite
-            agent_name="outbound-caller",
-        )
-    )
