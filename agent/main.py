@@ -1,6 +1,7 @@
 import asyncio
 import os
 import logging
+import json
 from livekit.agents import JobContext, WorkerOptions, cli
 from livekit.agents.llm import ChatContext, ChatMessage, FunctionContext
 from livekit.agents.pipeline import VoicePipelineAgent
