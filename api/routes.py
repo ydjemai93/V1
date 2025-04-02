@@ -379,16 +379,9 @@ def register_routes(app):
                             "error": "Aucun trunk SIP configuré. Utilisez /api/trunk/setup/direct d'abord."
                         }
                     
-                    # Vérifier que l'agent est disponible
-                    agents = await livekit_api.agent_dispatch.list_agent_info(
-                        api.ListAgentInfoRequest()
-                    )
-                    agent_available = any(agent.name == "outbound-caller" for agent in agents.agents)
-                    if not agent_available:
-                        return {
-                            "success": False,
-                            "error": "L'agent 'outbound-caller' n'est pas disponible. Vérifiez que le worker est en cours d'exécution."
-                        }
+                    # Vérifier l'existence de l'agent sans utiliser list_agent_info
+                    # Dans cette version modifiée, nous essayons simplement de créer un dispatch
+                    # sans vérifier d'abord si l'agent existe
                     
                     # Génération d'un nom de room unique
                     unique_room_name = f"call-{secrets.token_hex(4)}"
@@ -408,9 +401,9 @@ def register_routes(app):
                         })
                     )
                     
-                    logger.info(f"Envoi de la requête de dispatch: {dispatch_request}")
+                    logger.info(f"Envoi de la requête de dispatch")
                     dispatch = await livekit_api.agent_dispatch.create_dispatch(dispatch_request)
-                    logger.info(f"Dispatch créé: {dispatch}")
+                    logger.info(f"Dispatch créé: ID={dispatch.id}, Room={dispatch.room}")
                     
                     # Attendre brièvement pour vérifier si la room est créée
                     await asyncio.sleep(1)
@@ -422,7 +415,7 @@ def register_routes(app):
                         "dispatchId": dispatch.id,
                         "message": f"Appel initié pour {phone_number}",
                         "diagnostic": {
-                            "agent_available": agent_available,
+                            "agent_name": "outbound-caller",
                             "trunk_id": trunk_id,
                             "room_created": len(rooms_check.rooms) > 0,
                             "metadata": {
@@ -470,23 +463,49 @@ def register_routes(app):
                 try:
                     livekit_api = api.LiveKitAPI()
                     
-                    # Récupérer les agents disponibles
-                    agents = await livekit_api.agent_dispatch.list_agent_info(
-                        api.ListAgentInfoRequest()
-                    )
+                    # Vérifier l'existence de l'agent d'une manière indirecte
+                    # Nous allons essayer de créer une room temporaire et voir si un dispatch peut être créé
+                    test_room_name = f"test-agent-{secrets.token_hex(4)}"
+                    agent_name = "outbound-caller"
+                    agent_active = False
                     
-                    active_agents = []
-                    for agent in agents.agents:
-                        active_agents.append({
-                            "name": agent.name,
-                            "status": "active",
-                            "capacity": agent.capacity,
-                        })
+                    try:
+                        # Créer une room temporaire
+                        await livekit_api.room.create_room(api.CreateRoomRequest(name=test_room_name))
+                        
+                        # Essayer de créer un dispatch pour cette room
+                        dispatch = await livekit_api.agent_dispatch.create_dispatch(
+                            api.CreateAgentDispatchRequest(
+                                agent_name=agent_name,
+                                room=test_room_name,
+                                metadata="test"
+                            )
+                        )
+                        
+                        # Si on arrive ici sans exception, l'agent existe
+                        agent_active = True
+                        logger.info(f"Agent {agent_name} est disponible, dispatch ID: {dispatch.id}")
+                        
+                        # Nettoyer la room temporaire
+                        await livekit_api.room.delete_room(api.DeleteRoomRequest(room=test_room_name))
+                    except Exception as e:
+                        logger.warning(f"Impossible de créer un dispatch pour l'agent {agent_name}: {e}")
+                        # Essayer de nettoyer la room temporaire si elle a été créée
+                        try:
+                            await livekit_api.room.delete_room(api.DeleteRoomRequest(room=test_room_name))
+                        except:
+                            pass
                     
                     return {
                         "success": True,
-                        "agents": active_agents,
-                        "outbound_caller_available": any(agent.name == "outbound-caller" for agent in agents.agents)
+                        "agents": [
+                            {
+                                "name": "outbound-caller",
+                                "status": "active" if agent_active else "inactive",
+                                "capacity": 1.0 if agent_active else 0.0,
+                            }
+                        ],
+                        "outbound_caller_available": agent_active
                     }
                     
                 except Exception as e:
@@ -528,22 +547,10 @@ def register_routes(app):
                             "error": "Aucun trunk SIP configuré"
                         }
                     
-                    # Vérifier le trunk dans LiveKit - modification pour corriger l'erreur
-                    # Au lieu de filtrer par ID, nous allons récupérer tous les trunks et filtrer manuellement
-                    try:
-                        # Récupérer tous les trunks outbound
-                        trunks_response = await livekit_api.sip.list_sip_outbound_trunk(
-                            api.ListSIPOutboundTrunkRequest()
-                        )
-                        
-                        # Filtrer manuellement pour trouver le trunk avec l'ID correspondant
-                        matching_trunks = [t for t in trunks_response.trunks if t.sid == trunk_id]
-                        trunk_exists = len(matching_trunks) > 0
-                        trunk_details = matching_trunks[0] if trunk_exists else None
-                    except Exception as e:
-                        logger.error(f"Erreur lors de la récupération des trunks LiveKit: {e}")
-                        trunk_exists = False
-                        trunk_details = None
+                    # Vérifier le trunk dans LiveKit
+                    trunks = await livekit_api.sip.list_sip_outbound_trunk(
+                        api.ListSIPOutboundTrunkRequest(ids=[trunk_id])
+                    )
                     
                     # Vérifier le trunk dans Twilio
                     from twilio.rest import Client
@@ -565,12 +572,12 @@ def register_routes(app):
                         "success": True,
                         "livekit_trunk": {
                             "id": trunk_id,
-                            "exists": trunk_exists,
+                            "exists": len(trunks.trunks) > 0,
                             "details": {
-                                "name": trunk_details.name if trunk_details else None,
-                                "address": trunk_details.address if trunk_details else None,
-                                "numbers": trunk_details.numbers if trunk_details else None
-                            } if trunk_details else None
+                                "name": trunks.trunks[0].name if trunks.trunks else None,
+                                "address": trunks.trunks[0].address if trunks.trunks else None,
+                                "numbers": trunks.trunks[0].numbers if trunks.trunks else None
+                            } if trunks.trunks else None
                         },
                         "twilio_trunk": twilio_trunk_info
                     }
