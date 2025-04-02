@@ -876,7 +876,7 @@ def register_routes(app):
                     logger.info("Note: La suppression de trunk n'est pas supportée, nous allons créer un nouveau trunk")
                     
                     try:
-                        # Utilisation de client.trunking.trunks au lieu de client.sip.trunks
+                        # Récupérer ou créer un trunk
                         trunks = list(client.trunking.trunks.list(limit=1))
                         if trunks:
                             trunk = trunks[0]
@@ -885,11 +885,13 @@ def register_routes(app):
                             trunk = client.trunking.trunks.create(friendly_name="LiveKit AI Trunk")
                             logger.info(f"Nouveau trunk Twilio créé: {trunk.sid}")
                         
-                        # Vérifier si une liste d'identifiants existe
-                        cred_lists = list(client.trunking.credential_lists.list(limit=1))
+                        # Gestion des credentials
+                        # Pour Twilio, les credentials sont gérés différemment
+                        # Nous allons utiliser CredentialList
+                        cred_lists = list(client.api.credential_lists.list(limit=1))
                         if not cred_lists:
                             logger.info("Création d'une nouvelle credential list Twilio")
-                            cred_list = client.trunking.credential_lists.create(
+                            cred_list = client.api.credential_lists.create(
                                 friendly_name="LiveKit Credentials"
                             )
                             # Ajout des identifiants à la liste de credentials
@@ -900,14 +902,6 @@ def register_routes(app):
                         else:
                             cred_list = cred_lists[0]
                             logger.info(f"Utilisation de la credential list existante: {cred_list.sid}")
-                            
-                        # Associer la liste d'identifiants au trunk
-                        try:
-                            # Pour Twilio Trunking, l'association se fait différemment
-                            trunk.credential_lists.create(cred_list.sid)
-                            logger.info(f"Credential list associée au trunk")
-                        except Exception as e:
-                            logger.warning(f"Erreur lors de l'association de la credential list: {e}")
                         
                         # Client LiveKit
                         livekit_api = api.LiveKitAPI()
