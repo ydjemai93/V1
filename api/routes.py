@@ -379,9 +379,16 @@ def register_routes(app):
                             "error": "Aucun trunk SIP configuré. Utilisez /api/trunk/setup/direct d'abord."
                         }
                     
-                    # Vérifier l'existence de l'agent sans utiliser list_agent_info
-                    # Dans cette version modifiée, nous essayons simplement de créer un dispatch
-                    # sans vérifier d'abord si l'agent existe
+                    # Vérifier que l'agent est disponible
+                    agents = await livekit_api.agent_dispatch.list_agent_info(
+                        api.ListAgentInfoRequest()
+                    )
+                    agent_available = any(agent.name == "outbound-caller" for agent in agents.agents)
+                    if not agent_available:
+                        return {
+                            "success": False,
+                            "error": "L'agent 'outbound-caller' n'est pas disponible. Vérifiez que le worker est en cours d'exécution."
+                        }
                     
                     # Génération d'un nom de room unique
                     unique_room_name = f"call-{secrets.token_hex(4)}"
@@ -401,9 +408,9 @@ def register_routes(app):
                         })
                     )
                     
-                    logger.info(f"Envoi de la requête de dispatch")
+                    logger.info(f"Envoi de la requête de dispatch: {dispatch_request}")
                     dispatch = await livekit_api.agent_dispatch.create_dispatch(dispatch_request)
-                    logger.info(f"Dispatch créé: ID={dispatch.id}, Room={dispatch.room}")
+                    logger.info(f"Dispatch créé: {dispatch}")
                     
                     # Attendre brièvement pour vérifier si la room est créée
                     await asyncio.sleep(1)
@@ -415,7 +422,7 @@ def register_routes(app):
                         "dispatchId": dispatch.id,
                         "message": f"Appel initié pour {phone_number}",
                         "diagnostic": {
-                            "agent_name": "outbound-caller",
+                            "agent_available": agent_available,
                             "trunk_id": trunk_id,
                             "room_created": len(rooms_check.rooms) > 0,
                             "metadata": {
@@ -463,49 +470,23 @@ def register_routes(app):
                 try:
                     livekit_api = api.LiveKitAPI()
                     
-                    # Vérifier l'existence de l'agent d'une manière indirecte
-                    # Nous allons essayer de créer une room temporaire et voir si un dispatch peut être créé
-                    test_room_name = f"test-agent-{secrets.token_hex(4)}"
-                    agent_name = "outbound-caller"
-                    agent_active = False
+                    # Récupérer les agents disponibles
+                    agents = await livekit_api.agent_dispatch.list_agent_info(
+                        api.ListAgentInfoRequest()
+                    )
                     
-                    try:
-                        # Créer une room temporaire
-                        await livekit_api.room.create_room(api.CreateRoomRequest(name=test_room_name))
-                        
-                        # Essayer de créer un dispatch pour cette room
-                        dispatch = await livekit_api.agent_dispatch.create_dispatch(
-                            api.CreateAgentDispatchRequest(
-                                agent_name=agent_name,
-                                room=test_room_name,
-                                metadata="test"
-                            )
-                        )
-                        
-                        # Si on arrive ici sans exception, l'agent existe
-                        agent_active = True
-                        logger.info(f"Agent {agent_name} est disponible, dispatch ID: {dispatch.id}")
-                        
-                        # Nettoyer la room temporaire
-                        await livekit_api.room.delete_room(api.DeleteRoomRequest(room=test_room_name))
-                    except Exception as e:
-                        logger.warning(f"Impossible de créer un dispatch pour l'agent {agent_name}: {e}")
-                        # Essayer de nettoyer la room temporaire si elle a été créée
-                        try:
-                            await livekit_api.room.delete_room(api.DeleteRoomRequest(room=test_room_name))
-                        except:
-                            pass
+                    active_agents = []
+                    for agent in agents.agents:
+                        active_agents.append({
+                            "name": agent.name,
+                            "status": "active",
+                            "capacity": agent.capacity,
+                        })
                     
                     return {
                         "success": True,
-                        "agents": [
-                            {
-                                "name": "outbound-caller",
-                                "status": "active" if agent_active else "inactive",
-                                "capacity": 1.0 if agent_active else 0.0,
-                            }
-                        ],
-                        "outbound_caller_available": agent_active
+                        "agents": active_agents,
+                        "outbound_caller_available": any(agent.name == "outbound-caller" for agent in agents.agents)
                     }
                     
                 except Exception as e:
@@ -596,6 +577,80 @@ def register_routes(app):
             return jsonify(result)
         
         except Exception as e:
+            return jsonify({
+                "success": False,
+                "error": str(e),
+                "traceback": traceback.format_exc()
+            }), 500
+            
+    @app.route("/api/sip/direct-call", methods=["POST"])
+    def direct_sip_call():
+        """Test d'appel direct via l'API SIP de LiveKit"""
+        try:
+            from livekit import api
+            from livekit.protocol.sip import CreateSIPParticipantRequest
+            
+            data = request.json
+            if not data or "phone" not in data:
+                return jsonify({"error": "Numéro de téléphone manquant"}), 400
+            
+            phone_number = data["phone"]
+            
+            async def make_direct_call():
+                livekit_api = None
+                try:
+                    livekit_api = api.LiveKitAPI()
+                    
+                    # Vérifier si OUTBOUND_TRUNK_ID est défini
+                    trunk_id = os.getenv('OUTBOUND_TRUNK_ID')
+                    if not trunk_id:
+                        return {
+                            "success": False,
+                            "error": "Aucun trunk SIP configuré"
+                        }
+                    
+                    # Créer une room unique pour cet appel
+                    room_name = f"direct-call-{secrets.token_hex(4)}"
+                    
+                    # Créer la requête SIP
+                    request = CreateSIPParticipantRequest(
+                        room_name=room_name,
+                        sip_trunk_id=trunk_id,
+                        sip_call_to=phone_number,
+                        participant_identity=f"direct_call_{phone_number}",
+                        participant_name=f"Direct Call {phone_number}",
+                        play_dialtone=True,
+                    )
+                    
+                    # Envoyer la requête
+                    logger.info(f"Envoi de la requête SIP directe: {request}")
+                    response = await livekit_api.sip.create_sip_participant(request)
+                    logger.info(f"Réponse SIP reçue: {response}")
+                    
+                    return {
+                        "success": True,
+                        "message": f"Appel direct initié vers {phone_number}",
+                        "roomName": room_name,
+                        "trunkId": trunk_id,
+                        "response": str(response)
+                    }
+                    
+                except Exception as e:
+                    logger.error(f"Erreur lors de l'appel SIP direct: {e}")
+                    return {
+                        "success": False,
+                        "error": str(e),
+                        "traceback": traceback.format_exc()
+                    }
+                finally:
+                    if livekit_api:
+                        await livekit_api.aclose()
+            
+            result = asyncio.run(make_direct_call())
+            return jsonify(result)
+            
+        except Exception as e:
+            logger.exception("Erreur lors de l'appel SIP direct")
             return jsonify({
                 "success": False,
                 "error": str(e),
