@@ -117,3 +117,42 @@ async def entrypoint(ctx: JobContext):
             # Configurer l'agent pour utiliser les actions d'appel
             agent_llm = openai.LLM(
                 model="gpt-4o-mini",
+                fnc_ctx=call_actions,
+            )
+            agent.llm = agent_llm
+            
+            # Démarrage de l'agent vocal
+            agent.start(ctx.room, participant)
+            
+            # Premier message de l'agent
+            intro_message = (
+                f"Bonjour, je suis votre assistant virtuel. "
+                f"Comment puis-je vous aider aujourd'hui?"
+            )
+            await agent.say(intro_message, allow_interruptions=True)
+            
+            # Surveillance de l'état de l'appel
+            call_monitoring_task = asyncio.create_task(
+                outbound_caller.monitor_call_status(participant)
+            )
+            
+            # Attendre la fin de l'appel
+            await call_monitoring_task
+            
+        except Exception as e:
+            logger.error(f"Erreur lors de l'appel : {e}")
+            ctx.shutdown(reason=f"Erreur d'appel: {e}")
+    
+    except Exception as e:
+        logger.exception("Erreur dans l'entrypoint")
+        ctx.shutdown(reason=f"Erreur dans l'entrypoint: {e}")
+
+if __name__ == "__main__":
+    cli.run_app(
+        WorkerOptions(
+            entrypoint_fnc=entrypoint,
+            prewarm_fnc=prewarm,
+            # Désactivation de la répartition automatique pour utiliser l'API de dispatch explicite
+            agent_name="outbound-caller",
+        )
+    )
