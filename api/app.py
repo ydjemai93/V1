@@ -1,5 +1,6 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+from .routes import register_routes
 import os
 import sys
 import asyncio
